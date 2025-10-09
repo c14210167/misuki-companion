@@ -112,6 +112,8 @@ function animateEmotionTimeline(emotion_timeline) {
     if (!emotion_timeline || emotion_timeline.length === 0) return;
     
     let currentIndex = 0;
+    let lastEmotionChangeTime = Date.now();
+    const MIN_EMOTION_DISPLAY_TIME = 1000; // Minimum 1 second per emotion
     
     function changeExpression() {
         if (currentIndex >= emotion_timeline.length) {
@@ -122,14 +124,23 @@ function animateEmotionTimeline(emotion_timeline) {
         }
         
         const current = emotion_timeline[currentIndex];
-        updateMisukiMood(current.emotion, getEmotionText(current.emotion));
+        const currentDuration = current.duration * 1000; // Convert to milliseconds
+        
+        // Only change emotion if it will be displayed for at least 1 second
+        if (currentDuration >= MIN_EMOTION_DISPLAY_TIME) {
+            updateMisukiMood(current.emotion, getEmotionText(current.emotion));
+            lastEmotionChangeTime = Date.now();
+        }
         
         currentIndex++;
         
         // Schedule next expression change
         if (currentIndex < emotion_timeline.length) {
-            const nextDelay = current.duration * 1000; // Convert to milliseconds
-            setTimeout(changeExpression, nextDelay);
+            setTimeout(changeExpression, currentDuration);
+        } else {
+            // Set final emotion after everything is done
+            const lastEmotion = emotion_timeline[emotion_timeline.length - 1].emotion;
+            updateMisukiMood(lastEmotion, getEmotionText(lastEmotion));
         }
     }
     
