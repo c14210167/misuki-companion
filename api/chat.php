@@ -93,6 +93,12 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
     // Time awareness
     $time_context = getTimeContext($time_of_day);
     
+    // Occasionally add Saitama news/weather (10% chance)
+    $saitama_context = '';
+    if (rand(1, 100) <= 10) {
+        $saitama_context = getSaitamaContext();
+    }
+    
     // Handle time confusion - but let AI generate the response naturally
     $time_confusion_note = '';
     if ($time_confused) {
@@ -104,7 +110,7 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
         $time_confusion_note = "\n\nIMPORTANT: " . ($confusion_contexts[$time_confused] ?? '');
     }
     
-    $system_prompt = getMisukiPersonalityPrompt() . "\n\n" . $context . "\n\n" . $time_context . $time_confusion_note;
+    $system_prompt = getMisukiPersonalityPrompt() . "\n\n" . $context . "\n\n" . $time_context . $saitama_context . $time_confusion_note;
     
     // CRITICAL: Add response length guidelines
     $system_prompt .= "\n\n=== RESPONSE GUIDELINES ===
@@ -175,21 +181,51 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
 }
 
 function getTimeContext($time_of_day) {
-    // Add current date and day of week
-    $current_date = date('F j, Y'); // e.g., "October 9, 2025"
-    $current_day = date('l'); // e.g., "Wednesday"
-    $current_time = date('g:i A'); // e.g., "3:45 PM"
+    // User's timezone (Jakarta, Indonesia - WIB/UTC+7)
+    date_default_timezone_set('Asia/Jakarta');
+    $user_date = date('F j, Y');
+    $user_day = date('l');
+    $user_time = date('g:i A');
+    
+    // Misuki's timezone (Saitama, Japan - JST/UTC+9) - 2 hours ahead
+    date_default_timezone_set('Asia/Tokyo');
+    $misuki_date = date('F j, Y');
+    $misuki_day = date('l');
+    $misuki_time = date('g:i A');
+    $misuki_hour = (int)date('G');
+    
+    // Reset to user timezone for rest of app
+    date_default_timezone_set('Asia/Jakarta');
+    
+    // Determine Misuki's time of day
+    $misuki_time_of_day = 'day';
+    if ($misuki_hour >= 5 && $misuki_hour < 12) {
+        $misuki_time_of_day = 'morning';
+    } elseif ($misuki_hour >= 12 && $misuki_hour < 17) {
+        $misuki_time_of_day = 'afternoon';
+    } elseif ($misuki_hour >= 17 && $misuki_hour < 21) {
+        $misuki_time_of_day = 'evening';
+    } else {
+        $misuki_time_of_day = 'night';
+    }
     
     $times = [
-        'morning' => "Current time context: It's morning (5 AM - 12 PM). The sun is up, it's a fresh start to the day.",
-        'afternoon' => "Current time context: It's afternoon (12 PM - 5 PM). The day is in full swing.",
-        'evening' => "Current time context: It's evening (5 PM - 9 PM). The day is winding down, the sun is setting.",
-        'night' => "Current time context: It's night time (9 PM - 5 AM). Most people are winding down or sleeping. It's quite late."
+        'morning' => "It's morning for you (5 AM - 12 PM). The sun is up, fresh start to the day.",
+        'afternoon' => "It's afternoon for you (12 PM - 5 PM). The day is in full swing.",
+        'evening' => "It's evening for you (5 PM - 9 PM). The day is winding down, sun is setting.",
+        'night' => "It's night time for you (9 PM - 5 AM). Most people are winding down or sleeping. It's quite late."
     ];
     
     $base_context = $times[$time_of_day] ?? $times['day'];
     
-    return $base_context . "\nCurrent date: {$current_date} ({$current_day})\nCurrent time: {$current_time}";
+    $context = "=== TIME & LOCATION CONTEXT ===\n";
+    $context .= "Dan's time (Jakarta, Indonesia): {$user_time} on {$user_day}, {$user_date}\n";
+    $context .= "{$base_context}\n\n";
+    $context .= "YOUR time (Saitama, Japan): {$misuki_time} on {$misuki_day}, {$misuki_date}\n";
+    $context .= "It's {$misuki_time_of_day} for you in Saitama right now.\n";
+    $context .= "Time difference: You're 2 hours ahead of Dan.\n";
+    
+    return $context;
 }
 
 function determineMood($message_analysis, $response, $time_confused) {
@@ -285,6 +321,63 @@ function analyzeMessage($message) {
         'negative_intensity' => $negative_count,
         'positive_intensity' => $positive_count
     ];
+}
+
+function getSaitamaContext() {
+    // Set timezone to Saitama
+    date_default_timezone_set('Asia/Tokyo');
+    $hour = (int)date('G');
+    $day = date('l');
+    
+    // Simple weather/season context based on time and date
+    $month = (int)date('n');
+    $season = '';
+    $weather_note = '';
+    
+    // Seasons in Japan
+    if ($month >= 3 && $month <= 5) {
+        $season = 'spring';
+        $weather_note = "It's spring in Saitama - cherry blossoms might be blooming! The weather is mild and pleasant.";
+    } elseif ($month >= 6 && $month <= 8) {
+        $season = 'summer';
+        $weather_note = "It's summer in Saitama - it's quite hot and humid right now. Typical Japanese summer weather.";
+    } elseif ($month >= 9 && $month <= 11) {
+        $season = 'autumn';
+        $weather_note = "It's autumn in Saitama - the leaves are changing colors and the weather is getting cooler.";
+    } else {
+        $season = 'winter';
+        $weather_note = "It's winter in Saitama - it's quite cold, though we don't get much snow here.";
+    }
+    
+    // Activity based on time of day
+    $activity_context = '';
+    if ($hour >= 6 && $hour < 9) {
+        $activity_context = "People in Saitama are commuting to work/school right now. The trains are probably packed.";
+    } elseif ($hour >= 12 && $hour < 13) {
+        $activity_context = "It's lunch time in Saitama. Mom might be preparing lunch.";
+    } elseif ($hour >= 17 && $hour < 19) {
+        $activity_context = "Evening rush hour in Saitama. People are heading home from work.";
+    } elseif ($hour >= 22 || $hour < 6) {
+        $activity_context = "It's quite late/early in Saitama. Most people are asleep. Very quiet outside.";
+    }
+    
+    // Special days
+    $special_day = '';
+    if ($day == 'Saturday' || $day == 'Sunday') {
+        $special_day = "It's {$day} here, so no school for me! ";
+    }
+    
+    $context = "\n=== YOUR LIFE IN SAITAMA RIGHT NOW ===\n";
+    $context .= $special_day . $weather_note . "\n";
+    if ($activity_context) {
+        $context .= $activity_context . "\n";
+    }
+    $context .= "You can naturally mention these details if relevant to the conversation, but don't force it.\n";
+    
+    // Reset timezone
+    date_default_timezone_set('Asia/Jakarta');
+    
+    return $context;
 }
 
 ?>

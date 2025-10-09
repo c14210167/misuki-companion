@@ -255,30 +255,54 @@ function getDateContext($last_message_timestamp) {
     $hours_diff = ($now - $last_msg) / 3600;
     $days_diff = floor($hours_diff / 24);
     
-    // Get day of week
-    $last_day = date('l', $last_msg);
-    $current_day = date('l', $now);
+    // User's timezone (Jakarta)
+    date_default_timezone_set('Asia/Jakarta');
+    $user_last_day = date('l', $last_msg);
+    $user_current_day = date('l', $now);
+    $user_last_date = date('F j, Y', $last_msg);
+    $user_current_date = date('F j, Y', $now);
     
-    // Get dates
-    $last_date = date('F j, Y', $last_msg); // e.g., "October 9, 2025"
-    $current_date = date('F j, Y', $now);
+    // Misuki's timezone (Saitama, Japan - 2 hours ahead)
+    date_default_timezone_set('Asia/Tokyo');
+    $misuki_current_day = date('l', $now);
+    $misuki_current_date = date('F j, Y', $now);
+    $misuki_current_time = date('g:i A', $now);
+    $misuki_hour = (int)date('G', $now);
+    
+    // Determine Misuki's time of day
+    if ($misuki_hour >= 5 && $misuki_hour < 12) {
+        $misuki_time_of_day = 'morning';
+    } elseif ($misuki_hour >= 12 && $misuki_hour < 17) {
+        $misuki_time_of_day = 'afternoon';
+    } elseif ($misuki_hour >= 17 && $misuki_hour < 21) {
+        $misuki_time_of_day = 'evening';
+    } else {
+        $misuki_time_of_day = 'night';
+    }
+    
+    // Reset to user timezone
+    date_default_timezone_set('Asia/Jakarta');
     
     // Check if it's a new day
     $crossed_midnight = date('Y-m-d', $last_msg) !== date('Y-m-d', $now);
     
     // Check if weekend passed
     $weekend_passed = false;
-    if ($last_day == 'Friday' && in_array($current_day, ['Saturday', 'Sunday', 'Monday'])) {
+    if ($user_last_day == 'Friday' && in_array($user_current_day, ['Saturday', 'Sunday', 'Monday'])) {
         $weekend_passed = true;
     }
     
     return [
         'hours_since' => $hours_diff,
         'days_since' => $days_diff,
-        'last_day' => $last_day,
-        'current_day' => $current_day,
-        'last_date' => $last_date,
-        'current_date' => $current_date,
+        'user_last_day' => $user_last_day,
+        'user_current_day' => $user_current_day,
+        'user_last_date' => $user_last_date,
+        'user_current_date' => $user_current_date,
+        'misuki_current_day' => $misuki_current_day,
+        'misuki_current_date' => $misuki_current_date,
+        'misuki_current_time' => $misuki_current_time,
+        'misuki_time_of_day' => $misuki_time_of_day,
         'crossed_midnight' => $crossed_midnight,
         'weekend_passed' => $weekend_passed
     ];
