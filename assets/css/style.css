@@ -338,15 +338,24 @@ body {
     50% { transform: translateY(-20px) rotate(10deg); }
 }
 
+/* Find this section in your assets/css/style.css */
+
 .misuki-image {
     width: 100%;
     max-width: 350px;
     transition: all 0.3s ease;
     filter: drop-shadow(0 10px 20px rgba(0,0,0,0.3));
-    image-rendering: pixelated;
+    /* REMOVE THIS LINE: */
+    /* image-rendering: pixelated; */
+    
+    /* REPLACE WITH THIS FOR HD/SMOOTH RENDERING: */
+    image-rendering: auto;
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: crisp-edges;
+    -ms-interpolation-mode: bicubic;
+    
     z-index: 5;
 }
-
 .misuki-mood {
     margin-top: 20px;
     font-size: 0.9rem;

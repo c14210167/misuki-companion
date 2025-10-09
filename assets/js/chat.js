@@ -437,6 +437,7 @@ function typeMessageWithEmotions(bubbleId, fullText, emotion_timeline) {
     let currentEmotionIndex = 0;
     let characterIndex = 0;
     let currentSentenceStart = 0;
+    let lastEmotionSet = ''; // Track last emotion to avoid redundant updates
     
     // Create audio element for beep sound
     const beepSound = new Audio('assets/audio/misuki beep.mp3');
@@ -528,8 +529,11 @@ function typeMessageWithEmotions(bubbleId, fullText, emotion_timeline) {
             charCount += sentenceLength + 1; // +1 for space between sentences
         }
         
-        // Update expression
-        updateMisukiMood(currentEmotion, getEmotionText(currentEmotion));
+        // Only update emotion if it actually changed
+        if (currentEmotion !== lastEmotionSet) {
+            updateMisukiMood(currentEmotion, getEmotionText(currentEmotion));
+            lastEmotionSet = currentEmotion;
+        }
         addTremorEffect(currentEmotion);
         
         // Add character
@@ -596,11 +600,8 @@ function typeMessage(bubbleId, text, emotion = 'neutral') {
 
 function updateMisukiMood(mood, moodText) {
     if (moodImages[mood]) {
-        misukiImage.style.opacity = '0';
-        setTimeout(() => {
-            misukiImage.src = moodImages[mood];
-            misukiImage.style.opacity = '1';
-        }, 300);
+        // Instant change, no fade
+        misukiImage.src = moodImages[mood];
     }
     misukiMood.textContent = `● ${moodText} ●`;
 }
