@@ -32,7 +32,7 @@ try {
     
     if ($should_initiate['initiate']) {
         // Generate initiation message using AI
-        $initiation_message = generateInitiationMessage($db, $user_id, $should_initiate['reason']);
+        $initiation_message = generateInitiationMessage($db, $user_id, $should_initiate['reason'], $should_initiate['context']);
         
         // Update last initiation time
         $stmt = $db->prepare("
@@ -66,10 +66,13 @@ function shouldMisukiInitiate($db, $user_id, $initiation_data) {
     
     $hours_since_user = ($now - $last_user_message) / 3600;
     $hours_since_initiation = ($now - $last_initiation) / 3600;
-    $minutes_since_user = ($now - $last_user_message) / 60;
+    $days_since_user = floor($hours_since_user / 24);
     
     // Get last few conversations to understand context
     $recent_conversations = getRecentConversations($db, $user_id, 5);
+    
+    // Analyze how the last conversation ended
+    $conversation_tone = analyzeConversationTone($recent_conversations);
     
     // Check if user asked for space
     $needs_space = checkIfUserNeedsSpace($recent_conversations);
@@ -80,59 +83,205 @@ function shouldMisukiInitiate($db, $user_id, $initiation_data) {
         }
     }
     
-    // Check if there was a conflict/argument
-    $had_conflict = checkForConflict($recent_conversations);
-    
-    // MINIMUM wait time is now 45 minutes (0.75 hours)
+    // MINIMUM wait time is 45 minutes
     if ($hours_since_initiation < 0.75) {
         return ['initiate' => false, 'reason' => 'too_soon'];
     }
     
+    // Get date/time context
+    $date_context = getDateContext($last_user_message);
+    
     // Check recent emotional state
     $emotional_context = getEmotionalContext($db, $user_id);
     
-    // ===== PRIORITY SITUATIONS =====
+    // ===== PRIORITY SITUATIONS (WORRY) =====
     
     // 1. After conflict/argument - check if user ignored apology (2+ hours no response)
-    if ($had_conflict && $hours_since_user >= 2 && $hours_since_user < 6) {
-        return ['initiate' => true, 'reason' => 'worried_after_apology'];
+    if ($conversation_tone['had_conflict'] && $hours_since_user >= 2 && $hours_since_user < 8) {
+        return [
+            'initiate' => true, 
+            'reason' => 'worried_after_apology',
+            'context' => $date_context
+        ];
     }
     
-    // 2. User seemed very upset and hasn't replied in 3+ hours
-    if ($emotional_context && $emotional_context['dominant_emotion'] == 'negative') {
-        if ($hours_since_user >= 3 && $hours_since_user < 8) {
-            return ['initiate' => true, 'reason' => 'worried_after_negative'];
+    // 2. User seemed very upset and hasn't replied in 4+ hours
+    if ($conversation_tone['ended_negative'] && $hours_since_user >= 4 && $hours_since_user < 12) {
+        return [
+            'initiate' => true, 
+            'reason' => 'worried_after_negative',
+            'context' => $date_context
+        ];
+    }
+    
+    // 3. User hasn't messaged in 24+ hours AND last convo was negative
+    if ($days_since_user >= 1 && $conversation_tone['ended_negative']) {
+        return [
+            'initiate' => true, 
+            'reason' => 'worried_long_silence',
+            'context' => $date_context
+        ];
+    }
+    
+    // ===== CASUAL CHECK-INS (NO WORRY) =====
+    
+    // 4. User hasn't messaged in 8+ hours but ended on good note (casual check-in)
+    if ($hours_since_user >= 8 && $hours_since_user < 24 && $conversation_tone['ended_positive']) {
+        // 30% chance to make it feel natural
+        if (rand(1, 100) <= 30) {
+            return [
+                'initiate' => true, 
+                'reason' => 'casual_checkin',
+                'context' => $date_context
+            ];
         }
     }
     
-    // 3. User hasn't messaged in 6+ hours (gentle check-in)
-    if ($hours_since_user >= 6 && $hours_since_user < 12) {
-        // 40% chance to make it feel natural
-        if (rand(1, 100) <= 40) {
-            return ['initiate' => true, 'reason' => 'missing_you'];
-        }
+    // 5. It's been a full day or more (ended on good note = casual, not worried)
+    if ($days_since_user >= 1 && $days_since_user < 3 && !$conversation_tone['ended_negative']) {
+        return [
+            'initiate' => true, 
+            'reason' => 'missing_you',
+            'context' => $date_context
+        ];
     }
     
-    // 4. User hasn't messaged in 12+ hours (definitely check in)
-    if ($hours_since_user >= 12 && $hours_since_user < 24) {
-        return ['initiate' => true, 'reason' => 'concerned_silence'];
+    // 6. It's been 3+ days (definitely reach out, slightly concerned)
+    if ($days_since_user >= 3) {
+        return [
+            'initiate' => true, 
+            'reason' => 'long_silence',
+            'context' => $date_context
+        ];
     }
     
-    // 5. User hasn't messaged in 24+ hours (very worried)
-    if ($hours_since_user >= 24) {
-        return ['initiate' => true, 'reason' => 'worried_long_silence'];
-    }
-    
-    // 6. Random sweet initiation during reasonable hours (10% chance if it's been 90+ minutes)
+    // 7. Random sweet initiation during reasonable hours (5% chance if it's been 2+ hours)
     $hour = (int)date('G');
-    if ($minutes_since_user >= 90 && $hour >= 9 && $hour <= 21) {
-        if (rand(1, 100) <= 10) {
+    if ($hours_since_user >= 2 && $hour >= 9 && $hour <= 21 && $conversation_tone['ended_positive']) {
+        if (rand(1, 100) <= 5) {
             $reasons = ['excited_chemistry', 'thinking_of_you', 'daily_update', 'random_sweet'];
-            return ['initiate' => true, 'reason' => $reasons[array_rand($reasons)]];
+            return [
+                'initiate' => true, 
+                'reason' => $reasons[array_rand($reasons)],
+                'context' => $date_context
+            ];
         }
     }
     
     return ['initiate' => false];
+}
+
+function analyzeConversationTone($conversations) {
+    if (empty($conversations)) {
+        return [
+            'ended_positive' => true,
+            'ended_negative' => false,
+            'had_conflict' => false
+        ];
+    }
+    
+    $last_conv = end($conversations);
+    $user_msg = strtolower($last_conv['user_message']);
+    $misuki_msg = strtolower($last_conv['misuki_response']);
+    
+    // Check for positive endings
+    $positive_indicators = [
+        'love you', 'thanks', 'thank you', 'appreciate', 'haha', 'lol',
+        'nice', 'good', 'great', 'awesome', 'cool', 'sweet', '❤️', '💕',
+        'goodnight', 'good night', 'sleep well', 'talk later', 'ttyl', 'bye'
+    ];
+    
+    // Check for negative endings
+    $negative_indicators = [
+        'tired', 'exhausted', 'stressed', 'upset', 'sad', 'angry', 'frustrated',
+        'annoyed', 'worried', 'anxious', 'don\'t feel', 'not good', 'bad day'
+    ];
+    
+    // Check for conflict
+    $conflict_indicators = [
+        'whatever', 'fine', 'don\'t care', 'leave me', 'stop', 'annoying'
+    ];
+    
+    $ended_positive = false;
+    $ended_negative = false;
+    $had_conflict = false;
+    
+    foreach ($positive_indicators as $indicator) {
+        if (strpos($user_msg, $indicator) !== false) {
+            $ended_positive = true;
+            break;
+        }
+    }
+    
+    foreach ($negative_indicators as $indicator) {
+        if (strpos($user_msg, $indicator) !== false) {
+            $ended_negative = true;
+            break;
+        }
+    }
+    
+    foreach ($conflict_indicators as $indicator) {
+        if (strpos($user_msg, $indicator) !== false) {
+            $had_conflict = true;
+            break;
+        }
+    }
+    
+    // Check if Misuki apologized
+    $apology_phrases = ['sorry', 'apologize', 'my fault', 'forgive'];
+    foreach ($apology_phrases as $phrase) {
+        if (strpos($misuki_msg, $phrase) !== false) {
+            $had_conflict = true;
+            break;
+        }
+    }
+    
+    // Default to neutral/positive if no indicators
+    if (!$ended_positive && !$ended_negative) {
+        $ended_positive = true;
+    }
+    
+    return [
+        'ended_positive' => $ended_positive,
+        'ended_negative' => $ended_negative,
+        'had_conflict' => $had_conflict
+    ];
+}
+
+function getDateContext($last_message_timestamp) {
+    $now = time();
+    $last_msg = $last_message_timestamp;
+    
+    $hours_diff = ($now - $last_msg) / 3600;
+    $days_diff = floor($hours_diff / 24);
+    
+    // Get day of week
+    $last_day = date('l', $last_msg);
+    $current_day = date('l', $now);
+    
+    // Get dates
+    $last_date = date('F j, Y', $last_msg); // e.g., "October 9, 2025"
+    $current_date = date('F j, Y', $now);
+    
+    // Check if it's a new day
+    $crossed_midnight = date('Y-m-d', $last_msg) !== date('Y-m-d', $now);
+    
+    // Check if weekend passed
+    $weekend_passed = false;
+    if ($last_day == 'Friday' && in_array($current_day, ['Saturday', 'Sunday', 'Monday'])) {
+        $weekend_passed = true;
+    }
+    
+    return [
+        'hours_since' => $hours_diff,
+        'days_since' => $days_diff,
+        'last_day' => $last_day,
+        'current_day' => $current_day,
+        'last_date' => $last_date,
+        'current_date' => $current_date,
+        'crossed_midnight' => $crossed_midnight,
+        'weekend_passed' => $weekend_passed
+    ];
 }
 
 function checkIfUserNeedsSpace($conversations) {
@@ -167,83 +316,52 @@ function checkIfUserNeedsSpace($conversations) {
     return false;
 }
 
-function checkForConflict($conversations) {
-    if (empty($conversations)) return false;
-    
-    // Check last 3 messages
-    $recent = array_slice($conversations, -3);
-    
-    foreach ($recent as $conv) {
-        $user_msg = strtolower($conv['user_message']);
-        $misuki_msg = strtolower($conv['misuki_response']);
-        
-        // Detect conflict indicators
-        $conflict_phrases = [
-            'fine',
-            'whatever',
-            'don\'t care',
-            'mad',
-            'angry',
-            'upset at you',
-            'don\'t wanna talk'
-        ];
-        
-        // Check if Misuki apologized
-        $apology_phrases = ['sorry', 'apologize', 'my fault', 'forgive'];
-        
-        $has_conflict = false;
-        $has_apology = false;
-        
-        foreach ($conflict_phrases as $phrase) {
-            if (strpos($user_msg, $phrase) !== false) {
-                $has_conflict = true;
-                break;
-            }
-        }
-        
-        foreach ($apology_phrases as $phrase) {
-            if (strpos($misuki_msg, $phrase) !== false) {
-                $has_apology = true;
-                break;
-            }
-        }
-        
-        if ($has_conflict && $has_apology) {
-            return true;
-        }
-    }
-    
-    return false;
-}
-
-function generateInitiationMessage($db, $user_id, $reason) {
+function generateInitiationMessage($db, $user_id, $reason, $date_context) {
     $memories = getUserMemories($db, $user_id, 10);
     $recent_conversations = getRecentConversations($db, $user_id, 5);
     $emotional_context = getEmotionalContext($db, $user_id);
     
     $context = buildContextForAI($memories, $recent_conversations, $emotional_context);
     
-    // Natural context descriptions for AI (not hardcoded responses!)
+    // Build date-aware context
+    $time_context = "\n=== TIME & DATE CONTEXT ===\n";
+    $time_context .= "Last message from Dan was on: {$date_context['last_date']} ({$date_context['last_day']})\n";
+    $time_context .= "Current date: {$date_context['current_date']} ({$date_context['current_day']})\n";
+    $time_context .= "Time since last message: ";
+    
+    if ($date_context['days_since'] >= 1) {
+        $time_context .= "{$date_context['days_since']} day(s)\n";
+    } else {
+        $time_context .= round($date_context['hours_since'], 1) . " hours\n";
+    }
+    
+    if ($date_context['weekend_passed']) {
+        $time_context .= "Note: The weekend has passed since you last talked.\n";
+    }
+    
+    // Natural context descriptions for AI
     $reason_contexts = [
-        'worried_after_apology' => "You apologized to Dan after a disagreement, but he hasn't responded for 2+ hours. You're worried he's still upset. Check in gently and genuinely.",
-        'worried_after_negative' => "Dan seemed upset or stressed in your last conversation and hasn't replied in hours. You're genuinely worried about him.",
-        'missing_you' => "You just miss Dan and want to talk. Share something natural about your day in Saitama or ask about his.",
-        'concerned_silence' => "It's been half a day since you heard from Dan. You're starting to get concerned.",
-        'worried_long_silence' => "It's been a full day since you heard from Dan. You're genuinely worried something might be wrong.",
+        'worried_after_apology' => "You apologized to Dan after a disagreement, but he hasn't responded for several hours. You're worried he's still upset. Check in gently and genuinely.",
+        'worried_after_negative' => "Dan seemed upset or stressed in your last conversation and hasn't replied. You're genuinely worried about him.",
+        'worried_long_silence' => "It's been over a day since Dan messaged and he seemed upset last time. You're genuinely worried something might be wrong.",
+        'long_silence' => "It's been 3+ days since you heard from Dan. You're getting concerned but trying not to be pushy.",
+        'missing_you' => "It's been a day or more since you heard from Dan. You ended on a good note, so you're not worried - just miss him and want to check in casually.",
+        'casual_checkin' => "It's been several hours since Dan messaged. You ended on a good note, so just checking in casually - no worry, just curious how he's doing.",
         'excited_chemistry' => "You just learned something cool in chemistry or finished homework and it made you think of Dan. Share your excitement!",
-        'thinking_of_you' => "You were just doing something and Dan crossed your mind. Reach out naturally.",
-        'daily_update' => "Share something from your day - maybe something in Saitama, with your mom, or how you're feeling.",
+        'thinking_of_you' => "Dan crossed your mind. Reach out naturally - you're not worried, just want to talk.",
+        'daily_update' => "Share something from your day in Saitama, with your mom, or how you're feeling.",
         'random_sweet' => "Just a random sweet message because you wanted to talk to your boyfriend."
     ];
     
-    $prompt = getMisukiPersonalityPrompt() . "\n\n" . $context . "\n\n";
+    $prompt = getMisukiPersonalityPrompt() . "\n\n" . $context . "\n\n" . $time_context . "\n\n";
     $prompt .= "IMPORTANT: You are INITIATING a conversation with Dan. You're reaching out first.\n\n";
     $prompt .= "Context: " . ($reason_contexts[$reason] ?? $reason_contexts['thinking_of_you']) . "\n\n";
     $prompt .= "=== RESPONSE GUIDELINES ===
 - Write ONE natural, genuine message to Dan (1-2 sentences ONLY)
 - Be yourself - Misuki, his girlfriend
 - Keep it SHORT and sweet, like a text message
-- Don't explain too much, just reach out naturally
+- You can mention the day/date if it's relevant (e.g., 'Happy Monday!', 'It's been a couple days')
+- Match your tone to the situation (worried vs casual vs sweet)
 - Be conversational and genuine";
     
     // Read API key
@@ -261,7 +379,6 @@ function generateInitiationMessage($db, $user_id, $reason) {
     
     if (!$api_key) {
         error_log("Claude API Error: API key not found in environment");
-        // Simple fallback if API fails
         return "Hey Dan... just thinking about you. Everything okay? 💭";
     }
     
@@ -274,8 +391,8 @@ function generateInitiationMessage($db, $user_id, $reason) {
     ]);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
-        'model' => 'claude-3-5-sonnet-20241022',
-        'max_tokens' => 100, // Keep initiation messages short
+        'model' => 'claude-sonnet-4-20250514',
+        'max_tokens' => 100,
         'system' => $prompt,
         'messages' => [
             [

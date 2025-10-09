@@ -175,6 +175,11 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
 }
 
 function getTimeContext($time_of_day) {
+    // Add current date and day of week
+    $current_date = date('F j, Y'); // e.g., "October 9, 2025"
+    $current_day = date('l'); // e.g., "Wednesday"
+    $current_time = date('g:i A'); // e.g., "3:45 PM"
+    
     $times = [
         'morning' => "Current time context: It's morning (5 AM - 12 PM). The sun is up, it's a fresh start to the day.",
         'afternoon' => "Current time context: It's afternoon (12 PM - 5 PM). The day is in full swing.",
@@ -182,7 +187,9 @@ function getTimeContext($time_of_day) {
         'night' => "Current time context: It's night time (9 PM - 5 AM). Most people are winding down or sleeping. It's quite late."
     ];
     
-    return $times[$time_of_day] ?? $times['day'];
+    $base_context = $times[$time_of_day] ?? $times['day'];
+    
+    return $base_context . "\nCurrent date: {$current_date} ({$current_day})\nCurrent time: {$current_time}";
 }
 
 function determineMood($message_analysis, $response, $time_confused) {
