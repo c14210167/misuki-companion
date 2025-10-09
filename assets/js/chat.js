@@ -58,6 +58,55 @@ const moodImages = {
     dreamy: 'assets/images/misuki-dreamy.png'
 };
 
+// Load chat history on page load
+async function loadChatHistory() {
+    try {
+        const response = await fetch('api/get_history.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                user_id: 1,
+                limit: 50
+            })
+        });
+
+        const data = await response.json();
+        
+        if (data.success && data.conversations.length > 0) {
+            // Clear the default greeting
+            chatMessages.innerHTML = '';
+            
+            // Add all previous conversations
+            data.conversations.forEach(conv => {
+                addMessageInstant('user', conv.user_message);
+                addMessageInstant('misuki', conv.misuki_response);
+            });
+            
+            // Scroll to bottom
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+    } catch (error) {
+        console.error('Error loading chat history:', error);
+        // Keep the default greeting if history fails to load
+    }
+}
+
+// Add message instantly (for loading history)
+function addMessageInstant(sender, text) {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${sender}`;
+    
+    messageDiv.innerHTML = `
+        <div>
+            <div class="message-sender">${sender === 'user' ? 'You' : 'Misuki'}</div>
+            <div class="message-bubble">${text}</div>
+        </div>
+    `;
+    chatMessages.appendChild(messageDiv);
+}
+
 // Animate expression changes
 function animateEmotionTimeline(emotion_timeline) {
     if (!emotion_timeline || emotion_timeline.length === 0) return;
@@ -233,6 +282,7 @@ function randomBlur() {
 // Initialize
 createRain();
 randomBlur();
+loadChatHistory(); // Load previous conversations on page load
 
 // Check for Misuki initiations periodically
 async function checkForInitiation() {
@@ -517,21 +567,53 @@ function updateMisukiMood(mood, moodText) {
     misukiMood.textContent = `● ${moodText} ●`;
 }
 
+// IMPROVED: Better time confusion detection
+function detectTimeConfusion(message, timeOfDay) {
+    const messageLower = message.toLowerCase();
+    
+    // Patterns that indicate CURRENT greeting (not future reference)
+    const currentGreetingPatterns = [
+        /^good morning/i,
+        /^morning[!.]/i,
+        /^good night[!.]/i,
+        /^goodnight[!.]/i,
+        /^good evening/i,
+        /^evening[!.]/i,
+        /^good afternoon/i
+    ];
+    
+    // Check if this is actually a current greeting
+    let isCurrentGreeting = false;
+    for (const pattern of currentGreetingPatterns) {
+        if (pattern.test(message.trim())) {
+            isCurrentGreeting = true;
+            break;
+        }
+    }
+    
+    // If not a current greeting, don't flag time confusion
+    if (!isCurrentGreeting) {
+        return false;
+    }
+    
+    // Now check for time mismatch
+    if (timeOfDay === 'night' && /^good morning|^morning/i.test(message.trim())) {
+        return 'morning_at_night';
+    } else if (timeOfDay === 'morning' && /^good night|^goodnight/i.test(message.trim())) {
+        return 'night_at_morning';
+    } else if (timeOfDay === 'afternoon' && /^good morning/i.test(message.trim())) {
+        return 'morning_at_afternoon';
+    }
+    
+    return false;
+}
+
 async function sendMessage() {
     const message = messageInput.value.trim();
     if (!message) return;
 
     const timeOfDay = getTimeOfDay();
-    const messageLower = message.toLowerCase();
-    let timeConfused = false;
-    
-    if (timeOfDay === 'night' && (messageLower.includes('good morning') || messageLower.includes('morning'))) {
-        timeConfused = 'morning_at_night';
-    } else if (timeOfDay === 'morning' && (messageLower.includes('good night') || messageLower.includes('goodnight'))) {
-        timeConfused = 'night_at_morning';
-    } else if (timeOfDay === 'afternoon' && messageLower.includes('good morning')) {
-        timeConfused = 'morning_at_afternoon';
-    }
+    const timeConfused = detectTimeConfusion(message, timeOfDay);
 
     addMessage('user', message);
     messageInput.value = '';
@@ -556,7 +638,7 @@ async function sendMessage() {
         
         setTimeout(() => {
             typingIndicator.classList.remove('active');
-            addMessage('misuki', data.response);
+            addMessage('misuki', data.response, data.emotion_timeline);
             updateMisukiMood(data.mood, data.mood_text);
         }, 1000 + Math.random() * 1500);
 
