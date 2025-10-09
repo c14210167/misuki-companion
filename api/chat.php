@@ -74,7 +74,7 @@ try {
         'response' => $ai_response['text'],
         'mood' => $mood['mood'],
         'mood_text' => $mood['text'],
-        'emotion_timeline' => $emotion_timeline // NEW: Expression changes
+        'emotion_timeline' => $emotion_timeline
     ]);
     
 } catch (Exception $e) {
@@ -93,18 +93,27 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
     // Time awareness
     $time_context = getTimeContext($time_of_day);
     
-    // Handle time confusion
+    // Handle time confusion - but let AI generate the response naturally
     $time_confusion_note = '';
     if ($time_confused) {
-        $confusions = [
-            'morning_at_night' => "The user said 'good morning' but it's currently night time.",
-            'night_at_morning' => "The user said 'good night' but it's currently morning.",
-            'morning_at_afternoon' => "The user said 'good morning' but it's currently afternoon."
+        $confusion_contexts = [
+            'morning_at_night' => "The user just greeted you with 'good morning' but it's currently night time. Gently point this out in a caring, slightly confused way - maybe they're confused or just woke up?",
+            'night_at_morning' => "The user just said 'good night' but it's currently morning. Gently point this out - maybe they're going to bed late or confused about the time?",
+            'morning_at_afternoon' => "The user said 'good morning' but it's currently afternoon. Gently point this out in a caring way."
         ];
-        $time_confusion_note = "\n\nIMPORTANT: " . ($confusions[$time_confused] ?? '') . " You should gently point this out in a caring, slightly confused way. Maybe they're confused about the time or joking?";
+        $time_confusion_note = "\n\nIMPORTANT: " . ($confusion_contexts[$time_confused] ?? '');
     }
     
     $system_prompt = getMisukiPersonalityPrompt() . "\n\n" . $context . "\n\n" . $time_context . $time_confusion_note;
+    
+    // CRITICAL: Add response length guidelines
+    $system_prompt .= "\n\n=== RESPONSE GUIDELINES ===
+- Keep your responses SHORT and natural (1-3 sentences maximum)
+- Don't overwhelm with long paragraphs
+- Be conversational and genuine, like texting a friend
+- If you have multiple thoughts, pick the most important one
+- Save deeper conversations for when Dan asks follow-up questions
+- Quality over quantity - one meaningful sentence is better than a paragraph";
     
     // Read API key from .env file
     $api_key = getenv('ANTHROPIC_API_KEY');
@@ -122,7 +131,7 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
     
     if (!$api_key) {
         error_log("Claude API Error: API key not found in environment");
-        return ['text' => getFallbackResponse(strtolower($message), $analysis, $time_confused)];
+        return ['text' => "I'm having trouble connecting right now... Could you try again?"];
     }
     
     $ch = curl_init('https://api.anthropic.com/v1/messages');
@@ -134,8 +143,8 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
     ]);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
-        'model' => 'claude-sonnet-4-20250514',
-        'max_tokens' => 220, // Increased for Haiku
+        'model' => 'claude-sonnet-4-20250514', // Your preferred model
+        'max_tokens' => 150, // Reduced from 220 to keep responses shorter
         'system' => $system_prompt,
         'messages' => [
             [
@@ -143,7 +152,7 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
                 'content' => $message
             ]
         ],
-        'temperature' => 1.0 // More creative/emotional
+        'temperature' => 1.0
     ]));
     
     $response = curl_exec($ch);
@@ -152,7 +161,7 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
     
     if ($http_code !== 200) {
         error_log("Claude API Error (HTTP $http_code): " . $response);
-        return ['text' => getFallbackResponse(strtolower($message), $analysis, $time_confused)];
+        return ['text' => "I'm having trouble thinking right now... Could you say that again?"];
     }
     
     $result = json_decode($response, true);
@@ -162,7 +171,7 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
     }
     
     // Fallback
-    return ['text' => getFallbackResponse(strtolower($message), $analysis, $time_confused)];
+    return ['text' => "I'm listening... Tell me more?"];
 }
 
 function getTimeContext($time_of_day) {
@@ -176,50 +185,6 @@ function getTimeContext($time_of_day) {
     return $times[$time_of_day] ?? $times['day'];
 }
 
-function getFallbackResponse($message_lower, $analysis, $time_confused) {
-    // Handle time confusion first
-    if ($time_confused) {
-        $responses = [
-            'morning_at_night' => "Um... good evening, actually? *giggles softly* It's nighttime right now... Did you just wake up, or are you having one of those confusing days? Either way, I'm here for you! 🌙",
-            'night_at_morning' => "Oh... actually, it's morning! ☀️ Did you mean good morning? *tilts head* Are you feeling sleepy? That's okay, mornings can be confusing sometimes...",
-            'morning_at_afternoon' => "Mm... it's actually afternoon now! ☀️ Time flies, doesn't it? How has your day been so far?"
-        ];
-        
-        if (isset($responses[$time_confused])) {
-            return $responses[$time_confused];
-        }
-    }
-    
-    // Pattern matching for common phrases
-    if (strpos($message_lower, 'loud') !== false || strpos($message_lower, 'noisy') !== false) {
-        return "That sounds overwhelming... Sometimes quiet is hard to find. Though, maybe they just really enjoy being around you? Still, it's okay to need your own space too. 💭";
-    }
-    
-    if (strpos($message_lower, 'tired') !== false || strpos($message_lower, 'exhausted') !== false) {
-        return "You sound really tired... Please don't push yourself too hard, okay? Taking rest isn't being lazy - it's being kind to yourself. ♥";
-    }
-    
-    if (strpos($message_lower, 'stressed') !== false || strpos($message_lower, 'anxious') !== false) {
-        return "I can hear the stress in your words... It's okay to feel overwhelmed sometimes. You're doing your best, and that's more than enough. 🌸";
-    }
-    
-    if (strpos($message_lower, 'happy') !== false || strpos($message_lower, 'excited') !== false) {
-        return "I'm so glad to hear that! Your happiness makes me happy too! ✨ What made today special for you?";
-    }
-    
-    // Emotion-based responses
-    if ($analysis['emotion'] == 'negative') {
-        return "I'm here for you... Whatever you're going through, you don't have to face it alone. Want to talk about it? 💕";
-    }
-    
-    if ($analysis['emotion'] == 'positive') {
-        return "That's wonderful! I love seeing you happy. Tell me more! ☀️";
-    }
-    
-    // Default gentle response
-    return "I'm listening... Tell me more? I'm here to understand. 🌙";
-}
-
 function determineMood($message_analysis, $response, $time_confused) {
     $moods = [
         'neutral' => 'Listening',
@@ -231,7 +196,7 @@ function determineMood($message_analysis, $response, $time_confused) {
     
     // Time confusion makes her confused/concerned
     if ($time_confused) {
-        return ['mood' => 'concerned', 'text' => 'Confused'];
+        return ['mood' => 'confused', 'text' => 'Confused'];
     }
     
     // Determine mood based on emotion

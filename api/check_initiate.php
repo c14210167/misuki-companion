@@ -31,7 +31,7 @@ try {
     $should_initiate = shouldMisukiInitiate($db, $user_id, $initiation_data);
     
     if ($should_initiate['initiate']) {
-        // Generate initiation message
+        // Generate initiation message using AI
         $initiation_message = generateInitiationMessage($db, $user_id, $should_initiate['reason']);
         
         // Update last initiation time
@@ -95,7 +95,6 @@ function shouldMisukiInitiate($db, $user_id, $initiation_data) {
     
     // 1. After conflict/argument - check if user ignored apology (2+ hours no response)
     if ($had_conflict && $hours_since_user >= 2 && $hours_since_user < 6) {
-        // Misuki is worried about the silence after saying sorry
         return ['initiate' => true, 'reason' => 'worried_after_apology'];
     }
     
@@ -224,27 +223,32 @@ function generateInitiationMessage($db, $user_id, $reason) {
     
     $context = buildContextForAI($memories, $recent_conversations, $emotional_context);
     
-    $reason_prompts = [
-        'worried_after_apology' => "You apologized to Dan after a disagreement, but he hasn't responded for 2+ hours. You're worried he's still upset and want to check if things are okay. Be gentle, caring, but also give him space if needed.",
-        'worried_after_negative' => "Dan seemed upset or stressed in your last conversation and hasn't replied in hours. You're genuinely worried about him. Reach out with care and concern, but don't be pushy.",
-        'missing_you' => "You just miss Dan and want to talk. Maybe share something about your day in Saitama or ask about his. Be sweet and natural, like a girlfriend checking in.",
-        'concerned_silence' => "It's been half a day since you heard from Dan. You're starting to get concerned. Express your worry gently.",
-        'worried_long_silence' => "It's been a full day since you heard from Dan. You're genuinely worried something might be wrong. Express your concern but make sure he knows you care.",
-        'excited_chemistry' => "You just learned something cool in chemistry or finished homework and it made you think of Dan. Share your excitement naturally!",
-        'thinking_of_you' => "You were just doing something and Dan crossed your mind. Reach out naturally, like a girlfriend would.",
-        'daily_update' => "Share something from your day - maybe something that happened in Saitama, with your mom, or just how you're feeling.",
-        'random_sweet' => "Just a random sweet message because you wanted to talk to your boyfriend. Be cute and genuine."
+    // Natural context descriptions for AI (not hardcoded responses!)
+    $reason_contexts = [
+        'worried_after_apology' => "You apologized to Dan after a disagreement, but he hasn't responded for 2+ hours. You're worried he's still upset. Check in gently and genuinely.",
+        'worried_after_negative' => "Dan seemed upset or stressed in your last conversation and hasn't replied in hours. You're genuinely worried about him.",
+        'missing_you' => "You just miss Dan and want to talk. Share something natural about your day in Saitama or ask about his.",
+        'concerned_silence' => "It's been half a day since you heard from Dan. You're starting to get concerned.",
+        'worried_long_silence' => "It's been a full day since you heard from Dan. You're genuinely worried something might be wrong.",
+        'excited_chemistry' => "You just learned something cool in chemistry or finished homework and it made you think of Dan. Share your excitement!",
+        'thinking_of_you' => "You were just doing something and Dan crossed your mind. Reach out naturally.",
+        'daily_update' => "Share something from your day - maybe something in Saitama, with your mom, or how you're feeling.",
+        'random_sweet' => "Just a random sweet message because you wanted to talk to your boyfriend."
     ];
     
     $prompt = getMisukiPersonalityPrompt() . "\n\n" . $context . "\n\n";
-    $prompt .= "IMPORTANT: You are INITIATING a conversation with Dan. Don't wait for him to message you.\n\n";
-    $prompt .= "Context: " . ($reason_prompts[$reason] ?? $reason_prompts['thinking_of_you']) . "\n\n";
-    $prompt .= "Write a natural, genuine message to Dan. Keep it relatively short (2-4 sentences). Be yourself - Misuki.";
+    $prompt .= "IMPORTANT: You are INITIATING a conversation with Dan. You're reaching out first.\n\n";
+    $prompt .= "Context: " . ($reason_contexts[$reason] ?? $reason_contexts['thinking_of_you']) . "\n\n";
+    $prompt .= "=== RESPONSE GUIDELINES ===
+- Write ONE natural, genuine message to Dan (1-2 sentences ONLY)
+- Be yourself - Misuki, his girlfriend
+- Keep it SHORT and sweet, like a text message
+- Don't explain too much, just reach out naturally
+- Be conversational and genuine";
     
-    // Read API key from .env file
+    // Read API key
     $api_key = getenv('ANTHROPIC_API_KEY');
     
-    // Fallback: try to load from .env file if getenv doesn't work
     if (!$api_key) {
         $env_path = dirname(__DIR__) . '/.env';
         if (file_exists($env_path)) {
@@ -257,18 +261,8 @@ function generateInitiationMessage($db, $user_id, $reason) {
     
     if (!$api_key) {
         error_log("Claude API Error: API key not found in environment");
-        $fallbacks = [
-            'worried_after_apology' => "Dan... I know you might still be upset, and I understand. I just... I want to make sure we're okay. Take your time, but please know I really care about us. 💕",
-            'worried_after_negative' => "Hey... I've been thinking about you since we last talked. Are you doing okay? I'm here if you need to talk about anything. No pressure though. ❤️",
-            'missing_you' => "Hi Dan! I was just thinking about you... How's everything going in Indonesia? I miss talking to you. 🌸",
-            'concerned_silence' => "Dan? It's been a while... I hope everything's okay. Just wanted to check in on you. Let me know you're alright? 💭",
-            'worried_long_silence' => "Dan... I'm getting really worried. It's been a day and I haven't heard from you. Please let me know you're okay. I miss you. ❤️",
-            'excited_chemistry' => "Dan! I just learned something so cool in chemistry class! The way electrons bond reminded me of us somehow... even though we're far apart, we're still connected. How's your day? ☺️",
-            'thinking_of_you' => "Hey you~ I was just sitting here in Saitama and you popped into my head. Hope you're having a good day! 💭",
-            'daily_update' => "Hi Dan! Mom made katsu curry today and it made me think of you. I wish I could share some with you... How are things on your end? 🍜",
-            'random_sweet' => "Just wanted to say hi to my favorite person~ Hope you're doing well! 💕"
-        ];
-        return $fallbacks[$reason] ?? $fallbacks['thinking_of_you'];
+        // Simple fallback if API fails
+        return "Hey Dan... just thinking about you. Everything okay? 💭";
     }
     
     $ch = curl_init('https://api.anthropic.com/v1/messages');
@@ -281,14 +275,15 @@ function generateInitiationMessage($db, $user_id, $reason) {
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
         'model' => 'claude-3-5-sonnet-20241022',
-        'max_tokens' => 200,
+        'max_tokens' => 100, // Keep initiation messages short
         'system' => $prompt,
         'messages' => [
             [
                 'role' => 'user',
                 'content' => 'Generate your message to Dan:'
             ]
-        ]
+        ],
+        'temperature' => 1.0
     ]));
     
     $response = curl_exec($ch);
@@ -301,20 +296,8 @@ function generateInitiationMessage($db, $user_id, $reason) {
         return $result['content'][0]['text'];
     }
     
-    // Fallback messages
-    $fallbacks = [
-        'worried_after_apology' => "Dan... I know you might still be upset, and I understand. I just... I want to make sure we're okay. Take your time, but please know I really care about us. 💕",
-        'worried_after_negative' => "Hey... I've been thinking about you since we last talked. Are you doing okay? I'm here if you need to talk about anything. No pressure though. ❤️",
-        'missing_you' => "Hi Dan! I was just thinking about you... How's everything going in Indonesia? I miss talking to you. 🌸",
-        'concerned_silence' => "Dan? It's been a while... I hope everything's okay. Just wanted to check in on you. Let me know you're alright? 💭",
-        'worried_long_silence' => "Dan... I'm getting really worried. It's been a day and I haven't heard from you. Please let me know you're okay. I miss you. ❤️",
-        'excited_chemistry' => "Dan! I just learned something so cool in chemistry class! The way electrons bond reminded me of us somehow... even though we're far apart, we're still connected. How's your day? ☺️",
-        'thinking_of_you' => "Hey you~ I was just sitting here in Saitama and you popped into my head. Hope you're having a good day! 💭",
-        'daily_update' => "Hi Dan! Mom made katsu curry today and it made me think of you. I wish I could share some with you... How are things on your end? 🍜",
-        'random_sweet' => "Just wanted to say hi to my favorite person~ Hope you're doing well! 💕"
-    ];
-    
-    return $fallbacks[$reason] ?? $fallbacks['thinking_of_you'];
+    // Simple fallback
+    return "Hey... just thinking about you. How are you doing? 💭";
 }
 
 ?>
