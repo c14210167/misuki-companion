@@ -427,6 +427,10 @@ function typeMessageWithEmotions(bubbleId, fullText, emotion_timeline) {
     let characterIndex = 0;
     let currentSentenceStart = 0;
     
+    // Create audio element for beep sound
+    const beepSound = new Audio('assets/audio/misuki beep.mp3');
+    beepSound.volume = 0.3; // Adjust volume (0.0 to 1.0)
+    
     function getTypingSpeed(emotion) {
         const speeds = {
             // Fast emotions
@@ -522,6 +526,16 @@ function typeMessageWithEmotions(bubbleId, fullText, emotion_timeline) {
         bubble.textContent += char;
         chatMessages.scrollTop = chatMessages.scrollHeight;
         
+        // Play beep sound for letters and numbers only (not punctuation or spaces)
+        if (/[a-zA-Z0-9]/.test(char)) {
+            // Clone and play to allow rapid successive beeps
+            const beep = beepSound.cloneNode();
+            beep.volume = 0.3;
+            beep.play().catch(e => {
+                // Silently fail if audio can't play (user hasn't interacted yet)
+            });
+        }
+        
         characterIndex++;
         
         // Check for pause
@@ -542,10 +556,23 @@ function typeMessage(bubbleId, text, emotion = 'neutral') {
     let index = 0;
     const speed = 50;
     
+    // Create audio element for beep sound
+    const beepSound = new Audio('assets/audio/misuki beep.mp3');
+    beepSound.volume = 0.3;
+    
     function type() {
         if (index < text.length) {
-            bubble.textContent += text[index];
+            const char = text[index];
+            bubble.textContent += char;
             chatMessages.scrollTop = chatMessages.scrollHeight;
+            
+            // Play beep for letters and numbers
+            if (/[a-zA-Z0-9]/.test(char)) {
+                const beep = beepSound.cloneNode();
+                beep.volume = 0.3;
+                beep.play().catch(e => {});
+            }
+            
             index++;
             
             const pauseTime = text[index - 1] === '.' || text[index - 1] === '!' || text[index - 1] === '?' ? 300 : 0;
