@@ -3,6 +3,9 @@ header('Content-Type: application/json');
 require_once '../config/database.php';
 require_once '../includes/functions.php';
 require_once '../includes/core_profile_functions.php';
+require_once '../includes/misuki_profile_functions.php';
+require_once '../includes/misuki_schedule.php';
+require_once '../includes/adaptive_schedule.php';
 require_once '../includes/future_events_handler.php';
 require_once 'parse_emotions.php';
 require_once 'reminder_handler.php';
@@ -157,7 +160,19 @@ try {
     
     // ===== STEP 5: GET ENHANCED CONTEXT =====
     
-    // Core profile (ALWAYS included)
+    // Get Misuki's current status/activity
+    $misuki_status = getMisukiCurrentStatus($db, $user_id);
+    $woken_context = generateWokenUpContext($misuki_status);
+    $activity_context = generateActivityContext($misuki_status);
+    
+    // Update her status (she's now awake/responding)
+    updateMisukiStatus($db, $user_id, $misuki_status['status']);
+    
+    // Misuki's own profile (who SHE is)
+    $misuki_profile = getMisukiProfile($db);
+    $misuki_context = buildMisukiProfileContext($misuki_profile);
+    
+    // Core profile (who DAN is)
     $core_profile = getCoreProfile($db, $user_id);
     $core_context = buildCoreProfileContext($core_profile);
     
@@ -195,7 +210,10 @@ try {
         $current_activity,
         $family_mentioned,
         $db,
-        $user_id
+        $user_id,
+        $misuki_context,
+        $woken_context,
+        $activity_context
     );
     
     // Parse emotions in the response
@@ -252,7 +270,7 @@ try {
     ]);
 }
 
-function generateMisukiResponse($message, $memories, $conversations, $emotional_context, $analysis, $time_of_day, $time_confused, $file_content = null, $filename = null, $core_context = '', $current_location = null, $current_activity = null, $family_mentioned = null, $db = null, $user_id = 1) {
+function generateMisukiResponse($message, $memories, $conversations, $emotional_context, $analysis, $time_of_day, $time_confused, $file_content = null, $filename = null, $core_context = '', $current_location = null, $current_activity = null, $family_mentioned = null, $db = null, $user_id = 1, $misuki_context = '', $woken_context = '', $activity_context = '') {
     $context = buildContextForAI($memories, $conversations, $emotional_context);
     
     // Time awareness
@@ -321,7 +339,7 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
         }
     }
     
-    $system_prompt = getMisukiPersonalityPrompt() . "\n\n" . $core_context . "\n\n" . $context . "\n\n" . $time_context . $saitama_context . $file_context . $state_context . $family_context . $future_events_context . $time_confusion_note;
+    $system_prompt = $misuki_context . "\n\n" . getMisukiPersonalityPrompt() . "\n\n" . $core_context . "\n\n" . $context . "\n\n" . $woken_context . $activity_context . "\n\n" . $time_context . $saitama_context . $file_context . $state_context . $family_context . $future_events_context . $time_confusion_note;
     
     // CRITICAL: Add identity clarification
     $system_prompt .= "\n\n=== CRITICAL: WHO IS WHO ===\n";

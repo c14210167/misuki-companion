@@ -6,6 +6,26 @@ function getMisukiCurrentStatus($db, $user_id) {
     // Set to Saitama time
     date_default_timezone_set('Asia/Tokyo');
     
+    // FIRST: Check for active schedule override
+    require_once 'adaptive_schedule.php';
+    $override = getActiveScheduleOverride($db, $user_id);
+    
+    if ($override) {
+        // She's doing something different than her normal schedule!
+        date_default_timezone_set('Asia/Jakarta');
+        return [
+            'status' => $override['activity_type'],
+            'emoji' => $override['activity_emoji'],
+            'text' => $override['activity_text'],
+            'detail' => $override['activity_detail'],
+            'color' => $override['activity_color'],
+            'was_woken' => false,
+            'is_override' => true,
+            'plan_id' => $override['plan_id']
+        ];
+    }
+    
+    // Normal schedule
     $current_hour = (int)date('G');
     $current_minute = (int)date('i');
     $day_of_week = date('l');
