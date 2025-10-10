@@ -682,6 +682,10 @@ function addMessage(sender, text, emotion_timeline = null) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${sender}`;
     
+    // Add initial animation class for slide-in with bounce
+    messageDiv.style.opacity = '0';
+    messageDiv.style.transform = sender === 'user' ? 'translateX(50px)' : 'translateX(-50px)';
+    
     const bubbleId = 'bubble-' + Date.now();
     const timeStr = now.toLocaleTimeString('en-US', { 
         hour: 'numeric', 
@@ -698,6 +702,13 @@ function addMessage(sender, text, emotion_timeline = null) {
     `;
     chatMessages.appendChild(messageDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
+    
+    // Trigger bounce animation
+    setTimeout(() => {
+        messageDiv.style.transition = 'all 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55)';
+        messageDiv.style.opacity = '1';
+        messageDiv.style.transform = 'translateX(0)';
+    }, 10);
     
     if (sender === 'misuki' && emotion_timeline) {
         // Undertale-style typing with emotion-based speed

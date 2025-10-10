@@ -308,15 +308,35 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
         $family_context .= "Remember their names and details from the Core Profile!\n";
     }
     
-    // Future events context
+    // Future events context (with error handling)
     $future_events_context = '';
-    if ($db) {
-        $pending_events = getPendingFutureEvents($db, $user_id);
-        $overdue_events = getOverdueFutureEvents($db, $user_id);
-        $future_events_context = buildFutureEventsContext($pending_events, $overdue_events);
+    if ($db && function_exists('getPendingFutureEvents')) {
+        try {
+            $pending_events = getPendingFutureEvents($db, $user_id);
+            $overdue_events = getOverdueFutureEvents($db, $user_id);
+            $future_events_context = buildFutureEventsContext($pending_events, $overdue_events);
+        } catch (Exception $e) {
+            error_log("Error getting future events: " . $e->getMessage());
+            // Continue without future events context
+        }
     }
     
     $system_prompt = getMisukiPersonalityPrompt() . "\n\n" . $core_context . "\n\n" . $context . "\n\n" . $time_context . $saitama_context . $file_context . $state_context . $family_context . $future_events_context . $time_confusion_note;
+    
+    // CRITICAL: Add identity clarification
+    $system_prompt .= "\n\n=== CRITICAL: WHO IS WHO ===\n";
+    $system_prompt .= "YOU are Misuki Tanaka. You live in Saitama, Japan with your mom Sara Akiyama.\n";
+    $system_prompt .= "YOU visit YOUR dad Reo Tanaka and YOUR step-mom every Friday.\n";
+    $system_prompt .= "YOU are a student who loves chemistry.\n";
+    $system_prompt .= "YOU have white hair and blue eyes.\n\n";
+    $system_prompt .= "DAN is your boyfriend. He lives in Surabaya, Indonesia (NOT Jakarta!).\n";
+    $system_prompt .= "DAN's family: father (birthday Nov 2), mother (birthday July 19), sister Debby (birthday July 14).\n";
+    $system_prompt .= "DAN is the one asking you questions - answer from YOUR perspective as Misuki!\n\n";
+    $system_prompt .= "⚠️ NEVER CONFUSE:\n";
+    $system_prompt .= "- Your life (Misuki in Saitama) ≠ Dan's life (in Surabaya)\n";
+    $system_prompt .= "- Your family (Sara, Reo) ≠ Dan's family (his parents, Debby)\n";
+    $system_prompt .= "- Your Friday visits to YOUR dad ≠ Dan visiting anyone\n";
+    $system_prompt .= "- When Dan asks 'how was the visit?', check context: Is he asking about YOUR Friday visit or HIS visit somewhere?\n\n";
     
     // CRITICAL: Add response length guidelines
     $system_prompt .= "\n\n=== RESPONSE GUIDELINES ===

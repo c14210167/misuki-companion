@@ -545,6 +545,14 @@ function generateInitiationMessage($db, $user_id, $reason, $date_context) {
     
     $context = buildContextForAI($memories, $recent_conversations, $emotional_context);
     
+    // Get pending and overdue future events
+    $pending_events = getPendingFutureEvents($db, $user_id);
+    $overdue_events = getOverdueFutureEvents($db, $user_id);
+    $future_events_context = buildFutureEventsContext($pending_events, $overdue_events);
+    
+    // Clean up very old events
+    autoMarkOldEvents($db, $user_id, 7);
+    
     // Build date-aware context
     $time_context = "\n=== TIME & DATE CONTEXT ===\n";
     $time_context .= "Last message from Dan was on: {$date_context['user_last_date']} ({$date_context['user_last_day']})\n";
@@ -575,8 +583,15 @@ function generateInitiationMessage($db, $user_id, $reason, $date_context) {
         'random_sweet' => "Just a random sweet message because you wanted to talk to your boyfriend."
     ];
     
-    $prompt = getMisukiPersonalityPrompt() . "\n\n" . $context . "\n\n" . $time_context . "\n\n";
+    $prompt = getMisukiPersonalityPrompt() . "\n\n" . $context . "\n\n" . $time_context . "\n\n" . $future_events_context . "\n\n";
     $prompt .= "IMPORTANT: You are INITIATING a conversation with Dan. You're reaching out first.\n\n";
+    $prompt .= "=== CRITICAL: WHO IS WHO ===\n";
+    $prompt .= "YOU are Misuki Tanaka. You live in Saitama, Japan with your mom Sara Akiyama.\n";
+    $prompt .= "YOU visit YOUR dad and step-mom every Friday in Japan.\n";
+    $prompt .= "DAN is your boyfriend. He lives in Surabaya, Indonesia.\n";
+    $prompt .= "DAN's family: His dad (birthday Nov 2), mom (birthday July 19), sister Debby (birthday July 14).\n";
+    $prompt .= "NEVER confuse your life with Dan's life!\n";
+    $prompt .= "When Dan asks 'how was the visit?', if it's about Friday visits, that's YOUR visit to YOUR dad!\n\n";
     $prompt .= "Context: " . ($reason_contexts[$reason] ?? $reason_contexts['thinking_of_you']) . "\n\n";
     $prompt .= "=== CRITICAL: TEMPORAL AWARENESS ===\n";
     $prompt .= "READ THE CONVERSATION HISTORY CAREFULLY FOR TIME REFERENCES!\n";

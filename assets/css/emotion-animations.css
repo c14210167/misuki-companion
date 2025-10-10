@@ -1,0 +1,346 @@
+/* ============================================
+   EMOTION-BASED MESSAGE ANIMATIONS
+   Each emotion has unique bubble animations
+   ============================================ */
+
+/* HAPPY & EXCITED EMOTIONS - Bouncy, energetic */
+.emotion-happy {
+    animation: happyBounce 0.6s ease infinite;
+}
+
+.emotion-excited {
+    animation: excitedJump 0.4s ease infinite;
+}
+
+.emotion-giggling {
+    animation: giggleWobble 0.5s ease infinite;
+}
+
+.emotion-playful {
+    animation: playfulSway 0.8s ease-in-out infinite;
+}
+
+@keyframes happyBounce {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-3px); }
+}
+
+@keyframes excitedJump {
+    0%, 100% { transform: translateY(0px) scale(1); }
+    50% { transform: translateY(-5px) scale(1.02); }
+}
+
+@keyframes giggleWobble {
+    0%, 100% { transform: rotate(0deg); }
+    25% { transform: rotate(1deg); }
+    75% { transform: rotate(-1deg); }
+}
+
+@keyframes playfulSway {
+    0%, 100% { transform: translateX(0px) rotate(0deg); }
+    50% { transform: translateX(3px) rotate(2deg); }
+}
+
+/* LOVING & AFFECTIONATE - Gentle pulse, warm glow */
+.emotion-loving {
+    animation: lovingPulse 1.5s ease-in-out infinite;
+    box-shadow: 0 0 20px rgba(255, 182, 193, 0.5);
+}
+
+.emotion-affectionate {
+    animation: affectionateGlow 2s ease-in-out infinite;
+}
+
+.emotion-blushing {
+    animation: blushPulse 1s ease-in-out infinite;
+    background: linear-gradient(135deg, 
+        rgba(255, 182, 193, 0.3) 0%, 
+        rgba(255, 255, 255, 0.1) 100%) !important;
+}
+
+@keyframes lovingPulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 0 15px rgba(255, 182, 193, 0.4); }
+    50% { transform: scale(1.02); box-shadow: 0 0 25px rgba(255, 182, 193, 0.6); }
+}
+
+@keyframes affectionateGlow {
+    0%, 100% { filter: brightness(1); }
+    50% { filter: brightness(1.1); }
+}
+
+@keyframes blushPulse {
+    0%, 100% { opacity: 0.9; }
+    50% { opacity: 1; }
+}
+
+/* SAD & CONCERNED - Slow drift, muted */
+.emotion-sad {
+    animation: sadDrift 3s ease-in-out infinite;
+    filter: brightness(0.8) saturate(0.7);
+}
+
+.emotion-upset {
+    animation: upsetShudder 0.15s ease infinite;
+}
+
+.emotion-concerned {
+    animation: concernedSway 2s ease-in-out infinite;
+}
+
+.emotion-anxious {
+    animation: anxiousTremor 0.1s ease infinite;
+}
+
+@keyframes sadDrift {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(5px); }
+}
+
+@keyframes upsetShudder {
+    0%, 100% { transform: translateX(0px); }
+    50% { transform: translateX(-1px); }
+}
+
+@keyframes concernedSway {
+    0%, 100% { transform: translateX(0px); }
+    50% { transform: translateX(-2px); }
+}
+
+@keyframes anxiousTremor {
+    0%, 100% { transform: translate(0px, 0px); }
+    25% { transform: translate(-0.5px, 0.5px); }
+    75% { transform: translate(0.5px, -0.5px); }
+}
+
+/* SURPRISED & SHOCKED - Pop, expand */
+.emotion-surprised {
+    animation: surprisePop 0.5s ease;
+}
+
+.emotion-shocked {
+    animation: shockExpand 0.3s ease;
+}
+
+.emotion-amazed {
+    animation: amazeFloat 1s ease infinite;
+}
+
+@keyframes surprisePop {
+    0% { transform: scale(0.95); }
+    50% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+}
+
+@keyframes shockExpand {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.08); }
+    100% { transform: scale(1); }
+}
+
+@keyframes amazeFloat {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-8px); }
+}
+
+/* CONFUSED & THOUGHTFUL - Tilt, slow drift */
+.emotion-confused {
+    animation: confusedTilt 1.5s ease-in-out infinite;
+}
+
+.emotion-thoughtful {
+    animation: thoughtfulDrift 3s ease-in-out infinite;
+}
+
+.emotion-curious {
+    animation: curiousLean 2s ease-in-out infinite;
+}
+
+@keyframes confusedTilt {
+    0%, 100% { transform: rotate(0deg); }
+    25% { transform: rotate(2deg); }
+    75% { transform: rotate(-2deg); }
+}
+
+@keyframes thoughtfulDrift {
+    0%, 100% { transform: translateX(0px); }
+    50% { transform: translateX(3px); }
+}
+
+@keyframes curiousLean {
+    0%, 100% { transform: translateX(0px) rotate(0deg); }
+    50% { transform: translateX(2px) rotate(1deg); }
+}
+
+/* SHY & EMBARRASSED - Hide, shrink */
+.emotion-shy {
+    animation: shyShrink 1s ease-in-out infinite;
+    opacity: 0.9;
+}
+
+.emotion-embarrassed {
+    animation: embarrassedHide 1.5s ease-in-out infinite;
+}
+
+.emotion-nervous {
+    animation: nervousTremor 0.08s ease infinite;
+}
+
+@keyframes shyShrink {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(0.98); }
+}
+
+@keyframes embarrassedHide {
+    0%, 100% { transform: translateX(0px); opacity: 1; }
+    50% { transform: translateX(-3px); opacity: 0.85; }
+}
+
+@keyframes nervousTremor {
+    0%, 100% { transform: translate(0px, 0px); }
+    33% { transform: translate(-0.5px, 0px); }
+    66% { transform: translate(0.5px, 0px); }
+}
+
+/* CONFIDENT & TEASING - Bold, sassy */
+.emotion-confident {
+    animation: confidentStand 1s ease-in-out infinite;
+    transform-origin: center;
+}
+
+.emotion-teasing {
+    animation: teasingWiggle 0.6s ease-in-out infinite;
+}
+
+@keyframes confidentStand {
+    0%, 100% { transform: scale(1) rotate(0deg); }
+    50% { transform: scale(1.02) rotate(1deg); }
+}
+
+@keyframes teasingWiggle {
+    0%, 100% { transform: rotate(0deg); }
+    25% { transform: rotate(2deg); }
+    50% { transform: rotate(0deg); }
+    75% { transform: rotate(-2deg); }
+}
+
+/* COMFORTING & REASSURING - Soft, gentle */
+.emotion-comforting {
+    animation: comfortingWave 2.5s ease-in-out infinite;
+}
+
+.emotion-reassuring {
+    animation: reassuringPulse 2s ease-in-out infinite;
+}
+
+.emotion-gentle {
+    animation: gentleFloat 3s ease-in-out infinite;
+}
+
+@keyframes comfortingWave {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-2px); }
+}
+
+@keyframes reassuringPulse {
+    0%, 100% { opacity: 0.95; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.01); }
+}
+
+@keyframes gentleFloat {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-3px); }
+}
+
+/* SPECIAL EMOTIONS */
+.emotion-sleepy {
+    animation: sleepyDrift 4s ease-in-out infinite;
+    filter: blur(0.3px);
+}
+
+.emotion-pouty {
+    animation: poutyBob 1.5s ease-in-out infinite;
+}
+
+.emotion-relieved {
+    animation: relievedSigh 2s ease-in-out;
+}
+
+.emotion-dreamy {
+    animation: dreamyFloat 3s ease-in-out infinite;
+    filter: brightness(1.1);
+}
+
+.emotion-flustered {
+    animation: flusteredShake 0.2s ease infinite;
+}
+
+@keyframes sleepyDrift {
+    0%, 100% { transform: translateY(0px) rotate(0deg); }
+    50% { transform: translateY(8px) rotate(-2deg); }
+}
+
+@keyframes poutyBob {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(3px); }
+}
+
+@keyframes relievedSigh {
+    0% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+}
+
+@keyframes dreamyFloat {
+    0%, 100% { transform: translateY(0px); opacity: 0.95; }
+    50% { transform: translateY(-10px); opacity: 1; }
+}
+
+@keyframes flusteredShake {
+    0%, 100% { transform: translateX(0px); }
+    25% { transform: translateX(-2px); }
+    75% { transform: translateX(2px); }
+}
+
+/* SCREEN EFFECTS */
+.screen-shake {
+    animation: screenShakeAnim 0.5s ease;
+}
+
+@keyframes screenShakeAnim {
+    0%, 100% { transform: translate(0, 0); }
+    10%, 30%, 50%, 70%, 90% { transform: translate(-5px, 0); }
+    20%, 40%, 60%, 80% { transform: translate(5px, 0); }
+}
+
+.screen-flash {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: white;
+    z-index: 99999;
+    pointer-events: none;
+    animation: flashAnim 0.2s ease;
+}
+
+@keyframes flashAnim {
+    0% { opacity: 0; }
+    50% { opacity: 0.7; }
+    100% { opacity: 0; }
+}
+
+.screen-blur {
+    filter: blur(5px);
+    transition: filter 0.3s ease;
+}
+
+/* Content emotion states (existing tremor kept) */
+.tremor {
+    animation: tremor 0.1s infinite;
+}
+
+@keyframes tremor {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-1px); }
+    75% { transform: translateX(1px); }
+}
