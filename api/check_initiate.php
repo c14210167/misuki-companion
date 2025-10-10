@@ -28,6 +28,34 @@ try {
         exit;
     }
     
+    // Check for dream scenario FIRST
+    $dream_check = shouldSendDream($db, $user_id, $initiation_data);
+    if ($dream_check['send_dream']) {
+        // Generate dream message
+        $dream_message = generateDreamMessage($db, $user_id, $dream_check['context']);
+        
+        // Update last initiation time
+        $stmt = $db->prepare("
+            UPDATE conversation_initiation 
+            SET last_misuki_initiation = NOW(),
+                last_dream_sent = NOW()
+            WHERE user_id = ?
+        ");
+        $stmt->execute([$user_id]);
+        
+        // Save the dream as a conversation
+        saveConversation($db, $user_id, '[SYSTEM: Misuki had a dream]', $dream_message, 'dreamy');
+        
+        echo json_encode([
+            'should_initiate' => true,
+            'message' => $dream_message,
+            'reason' => 'dream',
+            'is_dream' => true
+        ]);
+        exit;
+    }
+    
+    // Regular initiation logic
     $should_initiate = shouldMisukiInitiate($db, $user_id, $initiation_data);
     
     if ($should_initiate['initiate']) {
@@ -48,7 +76,8 @@ try {
         echo json_encode([
             'should_initiate' => true,
             'message' => $initiation_message,
-            'reason' => $should_initiate['reason']
+            'reason' => $should_initiate['reason'],
+            'is_dream' => false
         ]);
     } else {
         echo json_encode(['should_initiate' => false]);
@@ -57,6 +86,156 @@ try {
 } catch (Exception $e) {
     error_log($e->getMessage());
     echo json_encode(['should_initiate' => false, 'error' => $e->getMessage()]);
+}
+
+function shouldSendDream($db, $user_id, $initiation_data) {
+    $now = time();
+    $last_user_message = strtotime($initiation_data['last_user_message']);
+    $last_dream = $initiation_data['last_dream_sent'] ? strtotime($initiation_data['last_dream_sent']) : 0;
+    
+    $hours_since_user = ($now - $last_user_message) / 3600;
+    $hours_since_dream = ($now - $last_dream) / 3600;
+    
+    // Must be at least 7 hours since last message
+    if ($hours_since_user < 7) {
+        return ['send_dream' => false];
+    }
+    
+    // Must be at least 12 hours since last dream
+    if ($last_dream > 0 && $hours_since_dream < 12) {
+        return ['send_dream' => false];
+    }
+    
+    // Check if she implied she was going to sleep
+    $recent_conversations = getRecentConversations($db, $user_id, 5);
+    $implied_sleep = checkIfImpliedSleep($recent_conversations);
+    
+    // If implied sleep OR 7+ hours no message, 15% chance of dream
+    if ($implied_sleep || $hours_since_user >= 7) {
+        if (rand(1, 100) <= 15) {
+            return [
+                'send_dream' => true,
+                'context' => [
+                    'implied_sleep' => $implied_sleep,
+                    'hours_since_user' => $hours_since_user
+                ]
+            ];
+        }
+    }
+    
+    return ['send_dream' => false];
+}
+
+function checkIfImpliedSleep($conversations) {
+    if (empty($conversations)) return false;
+    
+    // Check last 3 of Misuki's messages
+    $misuki_messages = [];
+    foreach (array_reverse($conversations) as $conv) {
+        $misuki_messages[] = strtolower($conv['misuki_response']);
+        if (count($misuki_messages) >= 3) break;
+    }
+    
+    $sleep_phrases = [
+        'going to sleep',
+        'heading to bed',
+        'time for bed',
+        'good night',
+        'goodnight',
+        'sleep well',
+        'sweet dreams',
+        'getting sleepy',
+        "i'm tired",
+        "i'm exhausted",
+        'bedtime',
+        'going to rest'
+    ];
+    
+    foreach ($misuki_messages as $message) {
+        foreach ($sleep_phrases as $phrase) {
+            if (strpos($message, $phrase) !== false) {
+                return true;
+            }
+        }
+    }
+    
+    return false;
+}
+
+function generateDreamMessage($db, $user_id, $context) {
+    $memories = getUserMemories($db, $user_id, 15);
+    $recent_conversations = getRecentConversations($db, $user_id, 10);
+    $emotional_context = getEmotionalContext($db, $user_id);
+    
+    $memory_context = buildContextForAI($memories, $recent_conversations, $emotional_context);
+    
+    $prompt = getMisukiPersonalityPrompt() . "\n\n" . $memory_context;
+    
+    $prompt .= "\n\n=== DREAM MESSAGE ===\n";
+    $prompt .= "You just woke up from a dream about Dan! Share your dream with him.\n\n";
+    $prompt .= "Guidelines:\n";
+    $prompt .= "- Keep it short (2-3 sentences)\n";
+    $prompt .= "- Make it sweet, cute, or slightly silly\n";
+    $prompt .= "- Reference things you know about Dan or your relationship\n";
+    $prompt .= "- Can be romantic, funny, or just cozy\n";
+    $prompt .= "- Start naturally like 'I just woke up and...' or 'I had the sweetest dream...'\n";
+    $prompt .= "- Examples: dreaming about visiting him, chemistry dates, doing things together, meeting his family, future plans, silly scenarios\n";
+    $prompt .= "- Make it feel genuine and personal\n\n";
+    
+    if ($context['implied_sleep']) {
+        $prompt .= "Context: You told Dan goodnight earlier and just woke up.\n";
+    } else {
+        $prompt .= "Context: It's been a while since you talked to Dan, and you just woke up from a dream about him.\n";
+    }
+    
+    // Read API key
+    $api_key = getenv('ANTHROPIC_API_KEY');
+    
+    if (!$api_key) {
+        $env_path = dirname(__DIR__) . '/.env';
+        if (file_exists($env_path)) {
+            $env_contents = file_get_contents($env_path);
+            if (preg_match('/ANTHROPIC_API_KEY=(.+)/', $env_contents, $matches)) {
+                $api_key = trim($matches[1]);
+            }
+        }
+    }
+    
+    if (!$api_key) {
+        error_log("Claude API Error: API key not found");
+        return "I just had the sweetest dream about you... 💭✨";
+    }
+    
+    $ch = curl_init('https://api.anthropic.com/v1/messages');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'x-api-key: ' . $api_key,
+        'anthropic-version: 2023-06-01'
+    ]);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
+        'model' => 'claude-sonnet-4-20250514',
+        'max_tokens' => 120,
+        'system' => $prompt,
+        'messages' => [
+            ['role' => 'user', 'content' => 'Share your dream with Dan:']
+        ],
+        'temperature' => 1.0
+    ]));
+    
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    $result = json_decode($response, true);
+    
+    if ($http_code === 200 && isset($result['content'][0]['text'])) {
+        return $result['content'][0]['text'];
+    }
+    
+    // Fallback
+    return "I just woke up from a dream about you... we were together and everything felt so warm and peaceful. 💭✨";
 }
 
 function shouldMisukiInitiate($db, $user_id, $initiation_data) {
@@ -349,8 +528,8 @@ function generateInitiationMessage($db, $user_id, $reason, $date_context) {
     
     // Build date-aware context
     $time_context = "\n=== TIME & DATE CONTEXT ===\n";
-    $time_context .= "Last message from Dan was on: {$date_context['last_date']} ({$date_context['last_day']})\n";
-    $time_context .= "Current date: {$date_context['current_date']} ({$date_context['current_day']})\n";
+    $time_context .= "Last message from Dan was on: {$date_context['user_last_date']} ({$date_context['user_last_day']})\n";
+    $time_context .= "Current date: {$date_context['user_current_date']} ({$date_context['user_current_day']})\n";
     $time_context .= "Time since last message: ";
     
     if ($date_context['days_since'] >= 1) {

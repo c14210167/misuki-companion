@@ -77,9 +77,9 @@ async function loadChatHistory() {
             },
             body: JSON.stringify({
                 user_id: 1,
-                limit: 100 // Increased to 100 to make sure we get everything
+                limit: 200
             }),
-            cache: 'no-store' // Strongest cache prevention
+            cache: 'no-store'
         });
 
         const data = await response.json();
@@ -395,7 +395,7 @@ createRain();
 randomBlur();
 loadChatHistory(); // Load previous conversations on page load
 
-// Check for Misuki initiations periodically
+// Check for Misuki initiations periodically (including dreams!)
 async function checkForInitiation() {
     try {
         const response = await fetch('api/check_initiate.php', {
@@ -417,11 +417,21 @@ async function checkForInitiation() {
                 
                 setTimeout(() => {
                     typingIndicator.classList.remove('active');
-                    addMessage('misuki', data.message);
-                    updateMisukiMood('gentle', 'Thinking of you');
                     
-                    // Play a subtle notification sound if you want
-                    // new Audio('assets/sounds/notification.mp3').play();
+                    // Determine mood based on whether it's a dream or regular message
+                    const mood = data.is_dream ? 'dreamy' : 'gentle';
+                    const moodText = data.is_dream ? 'Dreaming' : 'Thinking of you';
+                    
+                    addMessage('misuki', data.message);
+                    updateMisukiMood(mood, moodText);
+                    
+                    // Play notification sound
+                    const notificationSound = new Audio('assets/audio/notification.m4a');
+                    notificationSound.volume = 0.5;
+                    notificationSound.play().catch(e => {
+                        console.log('Could not play notification sound:', e);
+                    });
+                    
                 }, 2000 + Math.random() * 1000);
             }, 1000);
         }
@@ -494,10 +504,18 @@ setInterval(() => {
 
 // Message handling with Undertale-style typing
 function handleKeyPress(event) {
-    if (event.key === 'Enter') {
+    if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault(); // Prevent newline
         sendMessage();
     }
+    // Shift+Enter will allow newline
 }
+
+// Auto-resize textarea as user types
+messageInput.addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
 
 let lastMessageDate = null; // Track last message date for separators
 let attachedFile = null; // Track attached file
@@ -854,6 +872,7 @@ async function sendMessage() {
 
     addMessage('user', fullMessage);
     messageInput.value = '';
+    messageInput.style.height = 'auto'; // Reset height after sending
     
     // Remove file preview after sending
     if (attachedFile) {

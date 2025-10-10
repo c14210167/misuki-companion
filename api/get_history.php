@@ -12,7 +12,7 @@ require_once '../config/database.php';
 
 $input = json_decode(file_get_contents('php://input'), true);
 $user_id = $input['user_id'] ?? 1;
-$limit = $input['limit'] ?? 200; // Increased to 200 to show more history
+$limit = $input['limit'] ?? 200; // Get last 200 messages
 
 try {
     $db = getDBConnection();
@@ -22,13 +22,16 @@ try {
     $count_stmt->execute([$user_id]);
     $total_count = $count_stmt->fetch(PDO::FETCH_ASSOC)['total'];
     
-    // Get all conversations for this user
+    // Get LAST X conversations (subquery to get most recent, then order chronologically)
     $stmt = $db->prepare("
-        SELECT user_message, misuki_response, mood, timestamp 
-        FROM conversations 
-        WHERE user_id = ? 
-        ORDER BY timestamp ASC 
-        LIMIT ?
+        SELECT * FROM (
+            SELECT user_message, misuki_response, mood, timestamp 
+            FROM conversations 
+            WHERE user_id = ? 
+            ORDER BY timestamp DESC 
+            LIMIT ?
+        ) AS recent_messages
+        ORDER BY timestamp ASC
     ");
     $stmt->execute([$user_id, $limit]);
     $conversations = $stmt->fetchAll(PDO::FETCH_ASSOC);

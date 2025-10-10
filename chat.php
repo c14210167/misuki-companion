@@ -83,7 +83,15 @@
                 <span></span>
             </div>
 
-            <!-- Replace the chat-input section in your chat.php with this -->
+            <!-- File preview -->
+            <div class="file-preview" id="filePreview" style="display: none;">
+                <div class="file-preview-content">
+                    <span id="filePreviewText">📄 File attached</span>
+                    <button onclick="removeFile()">✕</button>
+                </div>
+            </div>
+
+            <!-- Chat input with textarea -->
             <div class="chat-input">
                 <input 
                     type="file" 
@@ -95,21 +103,13 @@
                 <button class="attach-button" onclick="document.getElementById('fileInput').click()" title="Attach file">
                     📎
                 </button>
-                <input 
-                    type="text" 
+                <textarea 
                     id="messageInput" 
                     placeholder="Type your message..."
-                    onkeypress="handleKeyPress(event)"
-                >
+                    rows="1"
+                    onkeydown="handleKeyPress(event)"
+                ></textarea>
                 <button onclick="sendMessage()">SEND</button>
-            </div>
-
-            <!-- Add this right after the typing indicator -->
-            <div class="file-preview" id="filePreview" style="display: none;">
-                <div class="file-preview-content">
-                    <span id="filePreviewText">📄 File attached</span>
-                    <button onclick="removeFile()">✕</button>
-                </div>
             </div>
         </div>
     </div>
