@@ -2,7 +2,9 @@
 header('Content-Type: application/json');
 require_once '../config/database.php';
 require_once '../includes/functions.php';
+require_once '../includes/core_profile_functions.php';
 require_once 'parse_emotions.php';
+require_once 'reminder_handler.php';
 
 // Get JSON input
 $input = json_decode(file_get_contents('php://input'), true);
@@ -24,17 +26,134 @@ if (empty($user_message) && empty($file_content)) {
 try {
     $db = getDBConnection();
     
-    // Retrieve context
+    // ===== STEP 1: CHECK FOR REMINDER REQUEST =====
+    if (detectReminderRequest($user_message)) {
+        $reminder_details = parseReminderDetails($user_message);
+        
+        if ($reminder_details['success']) {
+            // Extract time description for response
+            $time_info = extractTimeFromMessage(strtolower($user_message));
+            $time_desc = $time_info['description'];
+            
+            if ($reminder_details['confidence'] >= 70) {
+                // High confidence - set reminder directly
+                saveReminder(
+                    $db, 
+                    $user_id, 
+                    $reminder_details['reminder_text'], 
+                    $reminder_details['remind_at'],
+                    $reminder_details['confidence'],
+                    $user_message
+                );
+                
+                $response_text = generateReminderResponse($reminder_details, $time_desc);
+                
+                // Also generate emotion timeline
+                $emotion_timeline = parseEmotionsInMessage($response_text);
+                
+                echo json_encode([
+                    'response' => $response_text,
+                    'mood' => 'happy',
+                    'mood_text' => 'Happy to help',
+                    'emotion_timeline' => $emotion_timeline,
+                    'reminder_set' => true
+                ]);
+                
+                // Save conversation
+                saveConversation($db, $user_id, $user_message, $response_text, 'happy');
+                exit;
+                
+            } else {
+                // Medium confidence - ask for confirmation
+                $confirmation = generateReminderConfirmation($reminder_details, $time_desc);
+                
+                // Store pending reminder in conversation state
+                setConversationState($db, $user_id, 'pending_reminder', json_encode($reminder_details), 1);
+                
+                $emotion_timeline = parseEmotionsInMessage($confirmation);
+                
+                echo json_encode([
+                    'response' => $confirmation,
+                    'mood' => 'thoughtful',
+                    'mood_text' => 'Checking',
+                    'emotion_timeline' => $emotion_timeline,
+                    'awaiting_confirmation' => true
+                ]);
+                
+                saveConversation($db, $user_id, $user_message, $confirmation, 'thoughtful');
+                exit;
+            }
+        }
+    }
+    
+    // ===== STEP 2: CHECK FOR REMINDER CONFIRMATION =====
+    $pending_reminder = getConversationState($db, $user_id, 'pending_reminder');
+    if ($pending_reminder && preg_match('/^(yes|yeah|yep|sure|okay|ok|correct|right)\b/i', $user_message)) {
+        $reminder_details = json_decode($pending_reminder, true);
+        
+        saveReminder(
+            $db, 
+            $user_id, 
+            $reminder_details['reminder_text'], 
+            $reminder_details['remind_at'],
+            $reminder_details['confidence'],
+            ''
+        );
+        
+        clearConversationState($db, $user_id, 'pending_reminder');
+        
+        $response_text = "Perfect! Reminder set! 💕";
+        $emotion_timeline = parseEmotionsInMessage($response_text);
+        
+        echo json_encode([
+            'response' => $response_text,
+            'mood' => 'happy',
+            'mood_text' => 'Happy',
+            'emotion_timeline' => $emotion_timeline
+        ]);
+        
+        saveConversation($db, $user_id, $user_message, $response_text, 'happy');
+        exit;
+    }
+    
+    // ===== STEP 3: DETECT LOCATION/ACTIVITY MENTIONS =====
+    $location = detectLocationMention($user_message);
+    if ($location) {
+        trackUserLocation($db, $user_id, $location);
+    }
+    
+    $activity = detectActivityMention($user_message);
+    if ($activity) {
+        trackUserActivity($db, $user_id, $activity);
+    }
+    
+    $family_mentioned = detectFamilyMention($user_message);
+    
+    // ===== STEP 4: GET ENHANCED CONTEXT =====
+    
+    // Core profile (ALWAYS included)
+    $core_profile = getCoreProfile($db, $user_id);
+    $core_context = buildCoreProfileContext($core_profile);
+    
+    // Regular memories
     $memories = getUserMemories($db, $user_id);
     $contextual_memories = getContextualMemories($db, $user_id, $user_message);
     $all_memories = array_merge($memories, $contextual_memories);
-    $recent_conversations = getRecentConversations($db, $user_id, 20); // Increased to 20 for better context
+    
+    // Recent conversations
+    $recent_conversations = getRecentConversations($db, $user_id, 20);
+    
+    // Emotional context
     $emotional_context = getEmotionalContext($db, $user_id);
+    
+    // Conversation state
+    $current_location = getUserCurrentLocation($db, $user_id);
+    $current_activity = getUserCurrentActivity($db, $user_id);
     
     // Analyze message
     $message_analysis = analyzeMessage($user_message);
     
-    // Generate response with time awareness
+    // ===== STEP 5: GENERATE RESPONSE WITH SMART CONTEXT =====
     $ai_response = generateMisukiResponse(
         $user_message,
         $all_memories,
@@ -44,7 +163,11 @@ try {
         $time_of_day,
         $time_confused,
         $file_content,
-        $filename
+        $filename,
+        $core_context,
+        $current_location,
+        $current_activity,
+        $family_mentioned
     );
     
     // Parse emotions in the response
@@ -53,7 +176,7 @@ try {
     // Determine mood
     $mood = determineMood($message_analysis, $ai_response, $time_confused);
     
-    // Save everything
+    // ===== STEP 6: SAVE EVERYTHING =====
     $save_result = saveConversation($db, $user_id, $user_message, $ai_response['text'], $mood['mood']);
     if (!$save_result) {
         error_log("ERROR: Failed to save conversation! user_id=$user_id");
@@ -80,6 +203,7 @@ try {
             $sentiment = $message_analysis['emotion'] == 'negative' ? 'negative' : 
                         ($message_analysis['emotion'] == 'positive' ? 'positive' : 'neutral');
             trackDiscussionTopic($db, $user_id, $topic, $sentiment);
+            trackTopicDiscussed($db, $user_id, $topic);
         }
     }
     
@@ -100,7 +224,7 @@ try {
     ]);
 }
 
-function generateMisukiResponse($message, $memories, $conversations, $emotional_context, $analysis, $time_of_day, $time_confused, $file_content = null, $filename = null) {
+function generateMisukiResponse($message, $memories, $conversations, $emotional_context, $analysis, $time_of_day, $time_confused, $file_content = null, $filename = null, $core_context = '', $current_location = null, $current_activity = null, $family_mentioned = null) {
     $context = buildContextForAI($memories, $conversations, $emotional_context);
     
     // Time awareness
@@ -125,7 +249,7 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
         $file_context .= "Be genuine and engaged, like a real person reading something their boyfriend shared!\n";
     }
     
-    // Handle time confusion - but let AI generate the response naturally
+    // Handle time confusion
     $time_confusion_note = '';
     if ($time_confused) {
         $confusion_contexts = [
@@ -136,7 +260,27 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
         $time_confusion_note = "\n\nIMPORTANT: " . ($confusion_contexts[$time_confused] ?? '');
     }
     
-    $system_prompt = getMisukiPersonalityPrompt() . "\n\n" . $context . "\n\n" . $time_context . $saitama_context . $file_context . $time_confusion_note;
+    // Current state context
+    $state_context = '';
+    if ($current_location || $current_activity) {
+        $state_context = "\n\n=== DAN'S CURRENT STATE ===\n";
+        if ($current_location) {
+            $state_context .= "Dan is currently: $current_location\n";
+        }
+        if ($current_activity) {
+            $state_context .= "Dan is currently: $current_activity\n";
+        }
+        $state_context .= "Reference this naturally if relevant!\n";
+    }
+    
+    // Family context
+    $family_context = '';
+    if ($family_mentioned) {
+        $family_context = "\n\nNOTE: Dan just mentioned: $family_mentioned\n";
+        $family_context .= "Remember their names and details from the Core Profile!\n";
+    }
+    
+    $system_prompt = getMisukiPersonalityPrompt() . "\n\n" . $core_context . "\n\n" . $context . "\n\n" . $time_context . $saitama_context . $file_context . $state_context . $family_context . $time_confusion_note;
     
     // CRITICAL: Add response length guidelines
     $system_prompt .= "\n\n=== RESPONSE GUIDELINES ===
@@ -148,6 +292,7 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
 - Quality over quantity - one meaningful sentence is better than a paragraph
 - IMPORTANT: You are in an ACTIVE ONGOING conversation RIGHT NOW. Pay close attention to what was JUST said in the last 2-3 messages. Don't repeat topics that were literally just discussed moments ago unless directly asked about them again.
 - The conversation history shows the FLOW of the current chat - stay present in it!
+- CRITICAL: Read the CORE PROFILE carefully! Dan lives in SURABAYA, not Jakarta! His sister is DEBBY! Get these facts RIGHT!
 
 === USING ASTERISKS CORRECTLY ===
 - You CAN use asterisks for ACTIONS like *sending a photo of my desk* or *takes a selfie* or *snaps a picture of the chemistry homework*
@@ -199,8 +344,8 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
     ]);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
-        'model' => 'claude-sonnet-4-20250514', // Your preferred model
-        'max_tokens' => 150, // Reduced from 220 to keep responses shorter
+        'model' => 'claude-sonnet-4-20250514',
+        'max_tokens' => 150,
         'system' => $system_prompt,
         'messages' => [
             [
@@ -269,7 +414,7 @@ function getTimeContext($time_of_day) {
     $base_context = $times[$time_of_day] ?? $times['day'];
     
     $context = "=== TIME & LOCATION CONTEXT ===\n";
-    $context .= "Dan's time (Jakarta, Indonesia): {$user_time} on {$user_day}, {$user_date}\n";
+    $context .= "Dan's time (Surabaya, Indonesia): {$user_time} on {$user_day}, {$user_date}\n";
     $context .= "{$base_context}\n\n";
     $context .= "YOUR time (Saitama, Japan): {$misuki_time} on {$misuki_day}, {$misuki_date}\n";
     $context .= "It's {$misuki_time_of_day} for you in Saitama right now.\n";
@@ -387,42 +532,6 @@ function analyzeMessage($message) {
         'negative_intensity' => $negative_count,
         'positive_intensity' => $positive_count
     ];
-}
-
-function shouldSendFollowUp($message_analysis, $ai_response, $emotional_context) {
-    // Conditions where Misuki might want to send a follow-up message
-    $follow_up_chance = 0;
-    
-    // 1. If Dan seems upset/stressed (she's concerned)
-    if ($message_analysis['emotion'] == 'negative' && $message_analysis['negative_intensity'] > 2) {
-        $follow_up_chance = 40; // 40% chance
-    }
-    
-    // 2. If Dan is excited/happy about something (she's engaged)
-    if ($message_analysis['emotion'] == 'positive' && $message_analysis['positive_intensity'] > 2) {
-        $follow_up_chance = 25; // 25% chance
-    }
-    
-    // 3. If the conversation is about something she's passionate about (chemistry, relationship, etc)
-    $passionate_topics = ['chemistry', 'relationship', 'love', 'family'];
-    foreach ($passionate_topics as $topic) {
-        if (in_array($topic, $message_analysis['topics'])) {
-            $follow_up_chance += 15;
-        }
-    }
-    
-    // 4. Random chance for any conversation (she just has more to say)
-    $follow_up_chance += 10; // Base 10% chance
-    
-    // 5. If Dan's message was very short (she wants to keep conversation going)
-    if ($message_analysis['length'] <= 3) {
-        $follow_up_chance += 20;
-    }
-    
-    // Cap at 60% max
-    $follow_up_chance = min(60, $follow_up_chance);
-    
-    return rand(1, 100) <= $follow_up_chance;
 }
 
 function getSaitamaContext() {

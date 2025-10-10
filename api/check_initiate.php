@@ -28,7 +28,7 @@ try {
         exit;
     }
     
-    // Check for dream scenario FIRST
+    // Check for dream scenario FIRST (but with better logic)
     $dream_check = shouldSendDream($db, $user_id, $initiation_data);
     if ($dream_check['send_dream']) {
         // Generate dream message
@@ -96,37 +96,52 @@ function shouldSendDream($db, $user_id, $initiation_data) {
     $hours_since_user = ($now - $last_user_message) / 3600;
     $hours_since_dream = ($now - $last_dream) / 3600;
     
-    // Must be at least 7 hours since last message
-    if ($hours_since_user < 7) {
-        return ['send_dream' => false];
+    // Get Misuki's current time in Saitama (JST, UTC+9)
+    date_default_timezone_set('Asia/Tokyo');
+    $misuki_hour = (int)date('G');
+    $misuki_time = date('H:i');
+    
+    // Reset timezone
+    date_default_timezone_set('Asia/Jakarta');
+    
+    // CRITICAL: Dreams can only happen during "morning wake up" time (6 AM - 10 AM JST)
+    // This is when she'd naturally wake up and remember a dream
+    if ($misuki_hour < 6 || $misuki_hour >= 10) {
+        return ['send_dream' => false, 'reason' => 'wrong_time_of_day'];
     }
     
-    // Must be at least 12 hours since last dream
-    if ($last_dream > 0 && $hours_since_dream < 12) {
-        return ['send_dream' => false];
+    // Must be at least 8 hours since last message (she actually slept through the night)
+    if ($hours_since_user < 8) {
+        return ['send_dream' => false, 'reason' => 'too_soon'];
     }
     
-    // Check if she implied she was going to sleep
+    // Must be at least 24 hours since last dream (one dream per day max)
+    if ($last_dream > 0 && $hours_since_dream < 24) {
+        return ['send_dream' => false, 'reason' => 'dream_cooldown'];
+    }
+    
+    // Check if she actually said goodnight/going to sleep
     $recent_conversations = getRecentConversations($db, $user_id, 5);
-    $implied_sleep = checkIfImpliedSleep($recent_conversations);
+    $said_goodnight = checkIfSaidGoodnight($recent_conversations);
     
-    // If implied sleep OR 7+ hours no message, 15% chance of dream
-    if ($implied_sleep || $hours_since_user >= 7) {
-        if (rand(1, 100) <= 15) {
-            return [
-                'send_dream' => true,
-                'context' => [
-                    'implied_sleep' => $implied_sleep,
-                    'hours_since_user' => $hours_since_user
-                ]
-            ];
-        }
+    // Higher chance if she said goodnight (40%), lower if not (10%)
+    $dream_chance = $said_goodnight ? 40 : 10;
+    
+    if (rand(1, 100) <= $dream_chance) {
+        return [
+            'send_dream' => true,
+            'context' => [
+                'said_goodnight' => $said_goodnight,
+                'hours_since_user' => $hours_since_user,
+                'misuki_time' => $misuki_time
+            ]
+        ];
     }
     
-    return ['send_dream' => false];
+    return ['send_dream' => false, 'reason' => 'random_chance_failed'];
 }
 
-function checkIfImpliedSleep($conversations) {
+function checkIfSaidGoodnight($conversations) {
     if (empty($conversations)) return false;
     
     // Check last 3 of Misuki's messages
@@ -136,23 +151,24 @@ function checkIfImpliedSleep($conversations) {
         if (count($misuki_messages) >= 3) break;
     }
     
-    $sleep_phrases = [
-        'going to sleep',
-        'heading to bed',
-        'time for bed',
+    $goodnight_phrases = [
         'good night',
         'goodnight',
         'sleep well',
         'sweet dreams',
+        'going to sleep',
+        'heading to bed',
+        'time for bed',
         'getting sleepy',
         "i'm tired",
         "i'm exhausted",
         'bedtime',
-        'going to rest'
+        'going to rest',
+        'time to sleep'
     ];
     
     foreach ($misuki_messages as $message) {
-        foreach ($sleep_phrases as $phrase) {
+        foreach ($goodnight_phrases as $phrase) {
             if (strpos($message, $phrase) !== false) {
                 return true;
             }
@@ -171,21 +187,23 @@ function generateDreamMessage($db, $user_id, $context) {
     
     $prompt = getMisukiPersonalityPrompt() . "\n\n" . $memory_context;
     
-    $prompt .= "\n\n=== DREAM MESSAGE ===\n";
-    $prompt .= "You just woke up from a dream about Dan! Share your dream with him.\n\n";
+    $prompt .= "\n\n=== DREAM MESSAGE (MORNING WAKE UP) ===\n";
+    $prompt .= "You just woke up this morning in Saitama and remembered a dream about Dan! It's around {$context['misuki_time']} JST.\n";
+    $prompt .= "Share your dream with him naturally, like you just woke up.\n\n";
     $prompt .= "Guidelines:\n";
     $prompt .= "- Keep it short (2-3 sentences)\n";
+    $prompt .= "- Start with morning context: 'Just woke up and...' or 'Good morning! I had the sweetest dream...'\n";
     $prompt .= "- Make it sweet, cute, or slightly silly\n";
     $prompt .= "- Reference things you know about Dan or your relationship\n";
     $prompt .= "- Can be romantic, funny, or just cozy\n";
-    $prompt .= "- Start naturally like 'I just woke up and...' or 'I had the sweetest dream...'\n";
     $prompt .= "- Examples: dreaming about visiting him, chemistry dates, doing things together, meeting his family, future plans, silly scenarios\n";
-    $prompt .= "- Make it feel genuine and personal\n\n";
+    $prompt .= "- Make it feel genuine and personal\n";
+    $prompt .= "- Sound like you JUST woke up (maybe a bit sleepy still)\n\n";
     
-    if ($context['implied_sleep']) {
-        $prompt .= "Context: You told Dan goodnight earlier and just woke up.\n";
+    if ($context['said_goodnight']) {
+        $prompt .= "Context: You told Dan goodnight last night before sleeping.\n";
     } else {
-        $prompt .= "Context: It's been a while since you talked to Dan, and you just woke up from a dream about him.\n";
+        $prompt .= "Context: It's been a while since you talked (you were probably sleeping).\n";
     }
     
     // Read API key
@@ -203,7 +221,7 @@ function generateDreamMessage($db, $user_id, $context) {
     
     if (!$api_key) {
         error_log("Claude API Error: API key not found");
-        return "I just had the sweetest dream about you... 💭✨";
+        return "Good morning! I just woke up and had the sweetest dream about you... 💭✨";
     }
     
     $ch = curl_init('https://api.anthropic.com/v1/messages');
@@ -235,7 +253,7 @@ function generateDreamMessage($db, $user_id, $context) {
     }
     
     // Fallback
-    return "I just woke up from a dream about you... we were together and everything felt so warm and peaceful. 💭✨";
+    return "Good morning! Just woke up from a dream about you... we were together and everything felt so warm and peaceful. 💭✨";
 }
 
 function shouldMisukiInitiate($db, $user_id, $initiation_data) {
