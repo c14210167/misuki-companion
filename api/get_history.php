@@ -1,11 +1,18 @@
 <?php
 header('Content-Type: application/json');
-header('Cache-Control: no-cache, must-revalidate'); // Prevent caching
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Cache-Control: post-check=0, pre-check=0', false);
+header('Pragma: no-cache');
+header('Expires: 0');
+
+// Set timezone consistently
+date_default_timezone_set('Asia/Jakarta');
+
 require_once '../config/database.php';
 
 $input = json_decode(file_get_contents('php://input'), true);
 $user_id = $input['user_id'] ?? 1;
-$limit = $input['limit'] ?? 100; // Increased default to 100
+$limit = $input['limit'] ?? 200; // Increased to 200 to show more history
 
 try {
     $db = getDBConnection();
@@ -42,6 +49,7 @@ try {
         'count' => count($conversations),
         'total_in_db' => $total_count,
         'limit_used' => $limit,
+        'server_time' => date('Y-m-d H:i:s'),
         'debug' => [
             'user_id' => $user_id,
             'limit' => $limit,

@@ -13,6 +13,9 @@ $time_confused = $input['time_confused'] ?? false;
 $file_content = $input['file_content'] ?? null;
 $filename = $input['filename'] ?? null;
 
+// Set timezone to Jakarta (user's timezone)
+date_default_timezone_set('Asia/Jakarta');
+
 if (empty($user_message) && empty($file_content)) {
     echo json_encode(['error' => 'Message cannot be empty']);
     exit;
@@ -51,7 +54,13 @@ try {
     $mood = determineMood($message_analysis, $ai_response, $time_confused);
     
     // Save everything
-    saveConversation($db, $user_id, $user_message, $ai_response['text'], $mood['mood']);
+    $save_result = saveConversation($db, $user_id, $user_message, $ai_response['text'], $mood['mood']);
+    if (!$save_result) {
+        error_log("ERROR: Failed to save conversation! user_id=$user_id");
+    } else {
+        error_log("SUCCESS: Saved conversation at " . date('Y-m-d H:i:s'));
+    }
+    
     updateMemories($db, $user_id, $message_analysis);
     trackEmotionalState($db, $user_id, $message_analysis['emotion']);
     
@@ -283,7 +292,23 @@ function determineMood($message_analysis, $response, $time_confused) {
         return ['mood' => 'confused', 'text' => 'Confused'];
     }
     
-    // Determine mood based on emotion
+    // Analyze HER response text for mood (more accurate than just user's message)
+    $response_lower = strtolower($response['text']);
+    
+    // Check her response for concern/worry indicators
+    $concern_words = ['oh no', 'poor', 'sorry', 'worried', 'hope you\'re okay', 'are you okay', 'that sounds hard', 'that must be tough'];
+    foreach ($concern_words as $word) {
+        if (strpos($response_lower, $word) !== false) {
+            return ['mood' => 'concerned', 'text' => $moods['concerned']];
+        }
+    }
+    
+    // Check for thoughtful/questioning
+    if (strpos($response_lower, '?') !== false && substr_count($response_lower, '?') >= 2) {
+        return ['mood' => 'thoughtful', 'text' => $moods['thoughtful']];
+    }
+    
+    // Check user's emotion as secondary indicator
     if ($message_analysis['emotion'] == 'negative') {
         if ($message_analysis['negative_intensity'] > 3) {
             return ['mood' => 'concerned', 'text' => $moods['concerned']];

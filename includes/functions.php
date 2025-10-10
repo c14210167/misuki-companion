@@ -45,12 +45,29 @@ function getEmotionalContext($db, $user_id) {
     ] : null;
 }
 
+// Replace the saveConversation function in includes/functions.php
+
 function saveConversation($db, $user_id, $user_message, $misuki_response, $mood) {
-    $stmt = $db->prepare("
-        INSERT INTO conversations (user_id, user_message, misuki_response, mood) 
-        VALUES (?, ?, ?, ?)
-    ");
-    return $stmt->execute([$user_id, $user_message, $misuki_response, $mood]);
+    try {
+        $stmt = $db->prepare("
+            INSERT INTO conversations (user_id, user_message, misuki_response, mood, timestamp) 
+            VALUES (?, ?, ?, ?, NOW())
+        ");
+        $result = $stmt->execute([$user_id, $user_message, $misuki_response, $mood]);
+        
+        if ($result) {
+            $conversation_id = $db->lastInsertId();
+            error_log("saveConversation SUCCESS: ID=$conversation_id, user_id=$user_id, timestamp=" . date('Y-m-d H:i:s'));
+            return true;
+        } else {
+            error_log("saveConversation FAILED: execute returned false");
+            return false;
+        }
+    } catch (Exception $e) {
+        error_log("saveConversation ERROR: " . $e->getMessage());
+        error_log("Details - user_id: $user_id, message_length: " . strlen($user_message) . ", response_length: " . strlen($misuki_response));
+        return false;
+    }
 }
 
 function trackEmotionalState($db, $user_id, $emotion) {

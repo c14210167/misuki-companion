@@ -63,24 +63,29 @@ async function loadChatHistory() {
     console.log('🔄 Loading chat history...');
     
     try {
-        // Add cache-busting timestamp
+        // Add cache-busting timestamp + random number
         const timestamp = new Date().getTime();
+        const random = Math.random();
         
-        const response = await fetch(`api/get_history.php?t=${timestamp}`, {
+        const response = await fetch(`api/get_history.php?t=${timestamp}&r=${random}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
             },
             body: JSON.stringify({
                 user_id: 1,
                 limit: 100 // Increased to 100 to make sure we get everything
             }),
-            cache: 'no-cache' // Force no cache
+            cache: 'no-store' // Strongest cache prevention
         });
 
         const data = await response.json();
         console.log('📦 Received data:', data);
-        console.log(`📊 Total messages in response: ${data.conversations?.length || 0}`);
+        console.log(`📊 Total in DB: ${data.total_in_db}, Returned: ${data.conversations?.length || 0}`);
+        console.log(`🕐 Server time: ${data.server_time}`);
         
         if (data.success && data.conversations.length > 0) {
             console.log(`✅ Loading ${data.conversations.length} messages`);
@@ -121,8 +126,17 @@ async function loadChatHistory() {
                 addMessageInstant('misuki', conv.misuki_response, conv.timestamp);
             });
             
-            // Scroll to bottom
-            chatMessages.scrollTop = chatMessages.scrollHeight;
+            // Scroll to bottom - force it multiple times to ensure it works
+            setTimeout(() => {
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+                console.log('📜 Scrolled to bottom');
+            }, 100);
+            
+            setTimeout(() => {
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+                console.log('📜 Scroll check 2');
+            }, 300);
+            
             console.log('✅ Chat history loaded successfully');
             console.log(`🎯 Last date displayed: ${lastMessageDate}`);
         } else {
@@ -168,56 +182,65 @@ function addMessageInstant(sender, text, timestamp) {
 function animateEmotionTimeline(emotion_timeline) {
     if (!emotion_timeline || emotion_timeline.length === 0) return;
     
-    let currentIndex = 0;
-    let lastEmotionChangeTime = Date.now();
-    const MIN_EMOTION_DISPLAY_TIME = 1500; // Minimum 1.5 seconds per emotion (increased from 1 second)
+    const MIN_EMOTION_DISPLAY_TIME = 2000; // Increased to 2 seconds (more stable)
     
-    // Filter out emotions that would be displayed for less than minimum time
-    const filteredTimeline = [];
+    // Pre-process: Filter and merge short emotions
+    const processedTimeline = [];
+    let accumulatedDuration = 0;
+    let lastValidEmotion = null;
+    
     for (let i = 0; i < emotion_timeline.length; i++) {
-        const durationMs = emotion_timeline[i].duration * 1000;
+        const current = emotion_timeline[i];
+        const durationMs = current.duration * 1000;
         
-        // Only include emotions that will be visible for at least the minimum time
         if (durationMs >= MIN_EMOTION_DISPLAY_TIME) {
-            filteredTimeline.push(emotion_timeline[i]);
+            // This emotion is long enough to show
+            if (accumulatedDuration > 0 && lastValidEmotion) {
+                // Add accumulated time to this emotion
+                current.duration += accumulatedDuration / 1000;
+                accumulatedDuration = 0;
+            }
+            processedTimeline.push(current);
+            lastValidEmotion = current;
         } else {
-            // If this emotion is too short, add its duration to the next one
-            if (i + 1 < emotion_timeline.length) {
-                emotion_timeline[i + 1].duration += emotion_timeline[i].duration;
+            // Too short, accumulate the time
+            accumulatedDuration += durationMs;
+            
+            // If this is the last emotion, or next emotion is long enough, 
+            // add accumulated time to the next valid emotion
+            if (i === emotion_timeline.length - 1 && lastValidEmotion) {
+                lastValidEmotion.duration += accumulatedDuration / 1000;
             }
         }
     }
     
-    // If we filtered everything out, just use the last emotion
-    if (filteredTimeline.length === 0) {
+    // If everything was filtered out, just use the last emotion
+    if (processedTimeline.length === 0) {
         const lastEmotion = emotion_timeline[emotion_timeline.length - 1].emotion;
         updateMisukiMood(lastEmotion, getEmotionText(lastEmotion));
         return;
     }
     
+    console.log(`🎭 Filtered emotions: ${processedTimeline.length} shown (${emotion_timeline.length} total)`);
+    
+    let currentIndex = 0;
+    
     function changeExpression() {
-        if (currentIndex >= filteredTimeline.length) {
-            // End of timeline, set to last emotion
-            const lastEmotion = filteredTimeline[filteredTimeline.length - 1].emotion;
-            updateMisukiMood(lastEmotion, getEmotionText(lastEmotion));
+        if (currentIndex >= processedTimeline.length) {
             return;
         }
         
-        const current = filteredTimeline[currentIndex];
-        const currentDuration = current.duration * 1000; // Convert to milliseconds
+        const current = processedTimeline[currentIndex];
+        const currentDuration = current.duration * 1000;
         
         updateMisukiMood(current.emotion, getEmotionText(current.emotion));
-        lastEmotionChangeTime = Date.now();
+        console.log(`😊 Showing ${current.emotion} for ${(currentDuration/1000).toFixed(1)}s`);
         
         currentIndex++;
         
         // Schedule next expression change
-        if (currentIndex < filteredTimeline.length) {
+        if (currentIndex < processedTimeline.length) {
             setTimeout(changeExpression, currentDuration);
-        } else {
-            // Set final emotion after everything is done
-            const lastEmotion = filteredTimeline[filteredTimeline.length - 1].emotion;
-            updateMisukiMood(lastEmotion, getEmotionText(lastEmotion));
         }
     }
     
