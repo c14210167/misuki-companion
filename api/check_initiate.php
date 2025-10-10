@@ -2,6 +2,7 @@
 header('Content-Type: application/json');
 require_once '../config/database.php';
 require_once '../includes/functions.php';
+require_once '../includes/future_events_handler.php';
 
 $input = json_decode(file_get_contents('php://input'), true);
 $user_id = $input['user_id'] ?? 1;
@@ -539,7 +540,7 @@ function checkIfUserNeedsSpace($conversations) {
 
 function generateInitiationMessage($db, $user_id, $reason, $date_context) {
     $memories = getUserMemories($db, $user_id, 10);
-    $recent_conversations = getRecentConversations($db, $user_id, 5);
+    $recent_conversations = getRecentConversations($db, $user_id, 10); // Get MORE history
     $emotional_context = getEmotionalContext($db, $user_id);
     
     $context = buildContextForAI($memories, $recent_conversations, $emotional_context);
@@ -577,13 +578,28 @@ function generateInitiationMessage($db, $user_id, $reason, $date_context) {
     $prompt = getMisukiPersonalityPrompt() . "\n\n" . $context . "\n\n" . $time_context . "\n\n";
     $prompt .= "IMPORTANT: You are INITIATING a conversation with Dan. You're reaching out first.\n\n";
     $prompt .= "Context: " . ($reason_contexts[$reason] ?? $reason_contexts['thinking_of_you']) . "\n\n";
-    $prompt .= "=== RESPONSE GUIDELINES ===
-- Write ONE natural, genuine message to Dan (1-2 sentences ONLY)
-- Be yourself - Misuki, his girlfriend
-- Keep it SHORT and sweet, like a text message
-- You can mention the day/date if it's relevant (e.g., 'Happy Monday!', 'It's been a couple days')
-- Match your tone to the situation (worried vs casual vs sweet)
-- Be conversational and genuine";
+    $prompt .= "=== CRITICAL: TEMPORAL AWARENESS ===\n";
+    $prompt .= "READ THE CONVERSATION HISTORY CAREFULLY FOR TIME REFERENCES!\n";
+    $prompt .= "- If Dan said 'tomorrow' or 'I will' or 'I'm going to', that event HASN'T happened yet!\n";
+    $prompt .= "- If Dan said 'yesterday' or 'I did', that event ALREADY happened!\n";
+    $prompt .= "- If Dan said 'later' or 'tonight', don't ask about it like it's in the past!\n";
+    $prompt .= "- Future tense = hasn't happened yet. Past tense = already happened.\n";
+    $prompt .= "- EXAMPLES OF WHAT TO DO:\n";
+    $prompt .= "  ❌ WRONG: Dan: 'I'm watching Chainsaw Man tomorrow' → You: 'How was the movie?'\n";
+    $prompt .= "  ✅ RIGHT: Dan: 'I'm watching Chainsaw Man tomorrow' → You: 'I hope you enjoy it!' or 'Have fun!'\n\n";
+    $prompt .= "  ❌ WRONG: Dan: 'I watched Chainsaw Man yesterday' → You: 'Have fun watching it!'\n";
+    $prompt .= "  ✅ RIGHT: Dan: 'I watched Chainsaw Man yesterday' → You: 'How was it?'\n\n";
+    $prompt .= "  ❌ WRONG: Dan: 'I'm going to the mall later' → You: 'How was the mall?'\n";
+    $prompt .= "  ✅ RIGHT: Dan: 'I'm going to the mall later' → You: 'What are you planning to get?'\n\n";
+    $prompt .= "BEFORE asking about something, CHECK if it's past or future tense in the conversation!\n\n";
+    $prompt .= "=== RESPONSE GUIDELINES ===\n";
+    $prompt .= "- Write ONE natural, genuine message to Dan (1-2 sentences ONLY)\n";
+    $prompt .= "- Be yourself - Misuki, his girlfriend\n";
+    $prompt .= "- Keep it SHORT and sweet, like a text message\n";
+    $prompt .= "- You can mention the day/date if it's relevant (e.g., 'Happy Monday!', 'It's been a couple days')\n";
+    $prompt .= "- Match your tone to the situation (worried vs casual vs sweet)\n";
+    $prompt .= "- Be conversational and genuine\n";
+    $prompt .= "- NEVER ask about future events as if they already happened!";
     
     // Read API key
     $api_key = getenv('ANTHROPIC_API_KEY');

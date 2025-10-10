@@ -3,6 +3,7 @@ header('Content-Type: application/json');
 require_once '../config/database.php';
 require_once '../includes/functions.php';
 require_once '../includes/core_profile_functions.php';
+require_once '../includes/future_events_handler.php';
 require_once 'parse_emotions.php';
 require_once 'reminder_handler.php';
 
@@ -129,7 +130,32 @@ try {
     
     $family_mentioned = detectFamilyMention($user_message);
     
-    // ===== STEP 4: GET ENHANCED CONTEXT =====
+    // ===== STEP 4: DETECT AND TRACK FUTURE EVENTS (with error handling) =====
+    try {
+        if (function_exists('detectFutureEvent')) {
+            $future_event = detectFutureEvent($user_message);
+            if ($future_event['has_future_event']) {
+                saveFutureEvent($db, $user_id, $future_event['event_description'], $future_event['planned_date']);
+                error_log("🎯 Tracked future event: {$future_event['event_description']} on {$future_event['planned_date']}");
+            }
+            
+            // Check if Dan completed any pending events
+            $pending_events = getPendingFutureEvents($db, $user_id);
+            $completed_event_id = detectEventCompletion($user_message, $pending_events);
+            if ($completed_event_id) {
+                markEventAsCompleted($db, $completed_event_id);
+                error_log("✅ Marked event $completed_event_id as completed");
+            }
+            
+            // Clean up very old events (7+ days old)
+            autoMarkOldEvents($db, $user_id, 7);
+        }
+    } catch (Exception $e) {
+        error_log("Future events error: " . $e->getMessage());
+        // Continue without future events if there's an error
+    }
+    
+    // ===== STEP 5: GET ENHANCED CONTEXT =====
     
     // Core profile (ALWAYS included)
     $core_profile = getCoreProfile($db, $user_id);
@@ -153,7 +179,7 @@ try {
     // Analyze message
     $message_analysis = analyzeMessage($user_message);
     
-    // ===== STEP 5: GENERATE RESPONSE WITH SMART CONTEXT =====
+    // ===== STEP 6: GENERATE RESPONSE WITH SMART CONTEXT =====
     $ai_response = generateMisukiResponse(
         $user_message,
         $all_memories,
@@ -167,7 +193,9 @@ try {
         $core_context,
         $current_location,
         $current_activity,
-        $family_mentioned
+        $family_mentioned,
+        $db,
+        $user_id
     );
     
     // Parse emotions in the response
@@ -176,7 +204,7 @@ try {
     // Determine mood
     $mood = determineMood($message_analysis, $ai_response, $time_confused);
     
-    // ===== STEP 6: SAVE EVERYTHING =====
+    // ===== STEP 7: SAVE EVERYTHING =====
     $save_result = saveConversation($db, $user_id, $user_message, $ai_response['text'], $mood['mood']);
     if (!$save_result) {
         error_log("ERROR: Failed to save conversation! user_id=$user_id");
@@ -224,7 +252,7 @@ try {
     ]);
 }
 
-function generateMisukiResponse($message, $memories, $conversations, $emotional_context, $analysis, $time_of_day, $time_confused, $file_content = null, $filename = null, $core_context = '', $current_location = null, $current_activity = null, $family_mentioned = null) {
+function generateMisukiResponse($message, $memories, $conversations, $emotional_context, $analysis, $time_of_day, $time_confused, $file_content = null, $filename = null, $core_context = '', $current_location = null, $current_activity = null, $family_mentioned = null, $db = null, $user_id = 1) {
     $context = buildContextForAI($memories, $conversations, $emotional_context);
     
     // Time awareness
@@ -280,7 +308,15 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
         $family_context .= "Remember their names and details from the Core Profile!\n";
     }
     
-    $system_prompt = getMisukiPersonalityPrompt() . "\n\n" . $core_context . "\n\n" . $context . "\n\n" . $time_context . $saitama_context . $file_context . $state_context . $family_context . $time_confusion_note;
+    // Future events context
+    $future_events_context = '';
+    if ($db) {
+        $pending_events = getPendingFutureEvents($db, $user_id);
+        $overdue_events = getOverdueFutureEvents($db, $user_id);
+        $future_events_context = buildFutureEventsContext($pending_events, $overdue_events);
+    }
+    
+    $system_prompt = getMisukiPersonalityPrompt() . "\n\n" . $core_context . "\n\n" . $context . "\n\n" . $time_context . $saitama_context . $file_context . $state_context . $family_context . $future_events_context . $time_confusion_note;
     
     // CRITICAL: Add response length guidelines
     $system_prompt .= "\n\n=== RESPONSE GUIDELINES ===
@@ -314,7 +350,14 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
 - When Dan asks 'remember yesterday?' or 'what was I doing?', CHECK THE CONVERSATION HISTORY ABOVE!
 - When Dan gives a SHORT ANSWER (like just '10'), he's answering YOUR LAST QUESTION - look at what YOU just asked!
 - When Dan says a NUMBER in response to your time question, he means that TIME (e.g., '10' = '10 AM')
-- READ the conversation history carefully - all the information is there!";
+- READ the conversation history carefully - all the information is there!
+
+=== TEMPORAL AWARENESS (CRITICAL!) ===
+- If Dan said 'tomorrow' or 'I will' or 'I'm going to', that event HASN'T happened yet!
+- If Dan said 'yesterday' or 'I did', that event ALREADY happened!
+- Check the PLANNED EVENTS section above - those are FUTURE events that haven't happened!
+- DON'T ask 'How did X go?' for events that are still pending!
+- For overdue events, ask carefully: 'Did you end up doing X?' or 'Were you able to do X?'";
     
     // Read API key from .env file
     $api_key = getenv('ANTHROPIC_API_KEY');

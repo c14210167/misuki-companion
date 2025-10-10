@@ -60,6 +60,9 @@ const moodImages = {
     curious: 'assets/images/misuki-thoughtful.png'
 };
 
+// Track last user message time to prevent immediate initiations
+let lastUserMessageTime = Date.now();
+
 // Load chat history on page load
 async function loadChatHistory() {
     console.log('🔄 Loading chat history...');
@@ -459,6 +462,13 @@ loadChatHistory(); // Load previous conversations on page load
 
 // Check for Misuki initiations periodically (including dreams!)
 async function checkForInitiation() {
+    // CRITICAL FIX: Don't check if user just sent a message (within last 3 minutes)
+    const timeSinceLastMessage = Date.now() - lastUserMessageTime;
+    if (timeSinceLastMessage < 180000) { // 3 minutes in milliseconds
+        console.log('⏸️ Skipping initiation check - user just messaged', Math.floor(timeSinceLastMessage / 1000), 'seconds ago');
+        return;
+    }
+    
     try {
         const response = await fetch('api/check_initiate.php', {
             method: 'POST',
@@ -473,6 +483,8 @@ async function checkForInitiation() {
         const data = await response.json();
         
         if (data.should_initiate && data.message) {
+            console.log('💕 Misuki is initiating:', data.reason);
+            
             // Misuki is initiating!
             setTimeout(() => {
                 typingIndicator.classList.add('active');
@@ -496,6 +508,8 @@ async function checkForInitiation() {
                     
                 }, 2000 + Math.random() * 1000);
             }, 1000);
+        } else {
+            console.log('✅ No initiation needed');
         }
     } catch (error) {
         console.error('Error checking initiation:', error);
@@ -924,6 +938,10 @@ function detectTimeConfusion(message, timeOfDay) {
 async function sendMessage() {
     const message = messageInput.value.trim();
     if (!message && !attachedFile) return;
+
+    // CRITICAL: Update last user message time to prevent immediate initiations
+    lastUserMessageTime = Date.now();
+    console.log('📤 User sent message at', new Date(lastUserMessageTime).toLocaleTimeString());
 
     const timeOfDay = getTimeOfDay();
     const timeConfused = detectTimeConfusion(message, timeOfDay);
