@@ -63,8 +63,18 @@
 
         <div class="chat-section">
             <div class="chat-header">
-                <h2>✿ MISUKI ✿</h2>
-                <p>Your cozy companion ♥</p>
+                <div class="header-content">
+                    <div class="header-title">
+                        <h2>✿ MISUKI ✿</h2>
+                        <p>Your cozy companion ♥</p>
+                    </div>
+                    <div class="live-status" id="liveStatus">
+                        <span class="status-indicator">
+                            <span class="status-dot"></span>
+                            <span class="status-text">Loading...</span>
+                        </span>
+                    </div>
+                </div>
             </div>
 
             <div class="chat-messages" id="chatMessages">

@@ -459,6 +459,41 @@ function randomBlur() {
 createRain();
 randomBlur();
 loadChatHistory(); // Load previous conversations on page load
+updateLiveStatus(); // Load Misuki's current status
+setInterval(updateLiveStatus, 60000); // Update every minute
+
+// Function to update live status
+async function updateLiveStatus() {
+    try {
+        const response = await fetch('api/get_status.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                user_id: 1
+            })
+        });
+
+        const data = await response.json();
+        
+        if (data.success && data.status) {
+            const statusIndicator = document.querySelector('.status-indicator');
+            const statusText = document.querySelector('.status-text');
+            
+            // Update text with emoji
+            statusText.textContent = `${data.status.emoji} ${data.status.text}`;
+            
+            // Update status attribute for color
+            statusIndicator.setAttribute('data-status', data.status.status);
+            
+            // Add tooltip with detail
+            statusIndicator.title = data.status.detail;
+        }
+    } catch (error) {
+        console.error('Error fetching status:', error);
+    }
+}
 
 // Check for Misuki initiations periodically (including dreams!)
 async function checkForInitiation() {
@@ -735,68 +770,102 @@ function typeMessageWithEmotions(bubbleId, fullText, emotion_timeline) {
     let characterIndex = 0;
     let currentSentenceStart = 0;
     let lastEmotionSet = ''; // Track last emotion to avoid redundant updates
+    let isBackspacing = false;
+    let backspaceChance = 0.15; // 15% chance to backspace when thinking/nervous
     
     // Create audio element for beep sound
     const beepSound = new Audio('assets/audio/misuki beep.mp3');
-    beepSound.volume = 0.3; // Adjust volume (0.0 to 1.0)
+    beepSound.volume = 0.3;
     
     function getTypingSpeed(emotion) {
         const speeds = {
+            // Super fast emotions (EXCITED!)
+            'excited': 20,
+            'shocked': 15,
+            'amazed': 25,
+            
             // Fast emotions
-            'excited': 30,
-            'surprised': 25,
-            'shocked': 25,
-            'amazed': 35,
-            'playful': 40,
-            'giggling': 35,
-            'happy': 45,
+            'surprised': 30,
+            'playful': 35,
+            'giggling': 30,
+            'happy': 40,
+            'flustered': 25,
             
             // Normal speed
             'neutral': 50,
-            'thoughtful': 55,
-            'gentle': 50,
             'content': 50,
-            'curious': 55,
+            'gentle': 55,
+            'curious': 50,
             
-            // Slow emotions
-            'sad': 80,
-            'nervous': 90,
-            'anxious': 85,
-            'concerned': 70,
-            'pleading': 75,
-            'upset': 85,
-            
-            // Very slow (emphasis)
-            'shy': 100,
-            'embarrassed': 95,
-            'blushing': 90,
-            
-            // Medium-fast
-            'confident': 45,
-            'teasing': 40,
-            'loving': 55,
-            'affectionate': 55,
+            // Medium-slow (thoughtful, careful)
+            'thoughtful': 70,
+            'confused': 75,
+            'concerned': 65,
             'comforting': 60,
-            'reassuring': 55,
+            'reassuring': 60,
+            'affectionate': 65,
+            'loving': 70,
+            
+            // Slow emotions (sad, careful)
+            'sad': 90,
+            'upset': 85,
+            'pleading': 80,
+            'anxious': 95,
+            
+            // Very slow (nervous, shy - might backspace)
+            'nervous': 110,
+            'shy': 120,
+            'embarrassed': 115,
+            'blushing': 100,
             
             // Special
-            'sleepy': 110,
-            'pouty': 60,
+            'confident': 45,
+            'teasing': 40,
+            'sleepy': 130,
+            'pouty': 70,
             'relieved': 65,
-            'dreamy': 75,
-            'flustered': 35,
-            'confused': 70
+            'dreamy': 85
         };
         
         return speeds[emotion] || 50;
     }
     
+    function shouldBackspace(emotion) {
+        // Emotions that might cause backspacing (she's being careful)
+        const backspaceEmotions = ['nervous', 'shy', 'embarrassed', 'thoughtful', 'concerned', 'anxious'];
+        return backspaceEmotions.includes(emotion) && Math.random() < backspaceChance && characterIndex > 5;
+    }
+    
+    function applyEmotionAnimation(emotion) {
+        const bubble = document.getElementById(bubbleId);
+        if (!bubble) return;
+        
+        // Remove all emotion classes first
+        bubble.className = bubble.className.split(' ').filter(c => !c.startsWith('emotion-')).join(' ');
+        
+        // Add emotion-specific animation class
+        bubble.classList.add(`emotion-${emotion}`);
+        
+        // Screen effects for intense emotions
+        if (emotion === 'shocked' || emotion === 'surprised' || emotion === 'excited') {
+            triggerScreenShake();
+        }
+        
+        if (emotion === 'surprised' || emotion === 'shocked' || emotion === 'amazed') {
+            triggerFlash();
+        }
+        
+        if (emotion === 'sad' || emotion === 'upset' || emotion === 'crying') {
+            triggerBlur();
+        }
+    }
+    
     function shouldPause(char, nextChar) {
         // Pause at punctuation
-        if (char === '!' || char === '?') return 400; // Long pause
-        if (char === '.' || char === '…') return 300; // Medium pause
-        if (char === ',' || char === ';') return 200; // Short pause
-        if (char === '-' && nextChar === ' ') return 150; // Dash pause
+        if (char === '!' || char === '?') return 400;
+        if (char === '.' || char === '…') return 300;
+        if (char === ',' || char === ';') return 200;
+        if (char === '-' && nextChar === ' ') return 150;
         return 0;
     }
     
@@ -810,6 +879,108 @@ function typeMessageWithEmotions(bubbleId, fullText, emotion_timeline) {
     }
     
     function typeNextCharacter() {
+        if (characterIndex >= fullText.length) {
+            bubble.classList.remove('tremor');
+            // Remove emotion animation classes when done
+            bubble.className = bubble.className.split(' ').filter(c => !c.startsWith('emotion-')).join(' ');
+            return;
+        }
+        
+        // Find current emotion based on character position
+        let currentEmotion = 'neutral';
+        let charCount = 0;
+        
+        for (let i = 0; i < emotion_timeline.length; i++) {
+            const sentenceLength = emotion_timeline[i].sentence.length;
+            if (characterIndex >= charCount && characterIndex < charCount + sentenceLength) {
+                currentEmotion = emotion_timeline[i].emotion;
+                break;
+            }
+            charCount += sentenceLength + 1;
+        }
+        
+        // Only update emotion if it actually changed
+        if (currentEmotion !== lastEmotionSet) {
+            updateMisukiMood(currentEmotion, getEmotionText(currentEmotion));
+            applyEmotionAnimation(currentEmotion);
+            lastEmotionSet = currentEmotion;
+        }
+        addTremorEffect(currentEmotion);
+        
+        // Check for backspace (thinking/nervous emotions)
+        if (!isBackspacing && shouldBackspace(currentEmotion) && characterIndex > 2) {
+            isBackspacing = true;
+            const backspaceCount = Math.floor(Math.random() * 3) + 2; // Backspace 2-4 characters
+            
+            function doBackspace(count) {
+                if (count <= 0) {
+                    isBackspacing = false;
+                    setTimeout(typeNextCharacter, getTypingSpeed(currentEmotion));
+                    return;
+                }
+                
+                bubble.textContent = bubble.textContent.slice(0, -1);
+                characterIndex--;
+                setTimeout(() => doBackspace(count - 1), 50); // Fast backspace
+            }
+            
+            doBackspace(backspaceCount);
+            return;
+        }
+        
+        // Add character
+        const char = fullText[characterIndex];
+        bubble.textContent += char;
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        
+        // Play beep sound for letters and numbers only
+        if (/[a-zA-Z0-9]/.test(char)) {
+            const beep = beepSound.cloneNode();
+            beep.volume = 0.3;
+            beep.play().catch(e => {});
+        }
+        
+        characterIndex++;
+        
+        // Check for pause
+        const pauseTime = shouldPause(char, fullText[characterIndex]);
+        const typingSpeed = getTypingSpeed(currentEmotion);
+        
+        setTimeout(typeNextCharacter, typingSpeed + pauseTime);
+    }
+    
+    typeNextCharacter();
+}
+
+// Screen effect functions
+function triggerScreenShake() {
+    const container = document.querySelector('.chat-container');
+    container.classList.add('screen-shake');
+    setTimeout(() => container.classList.remove('screen-shake'), 500);
+}
+
+function triggerFlash() {
+    const flash = document.createElement('div');
+    flash.className = 'screen-flash';
+    document.body.appendChild(flash);
+    setTimeout(() => flash.remove(), 200);
+}
+
+function triggerBlur() {
+    const container = document.querySelector('.chat-container');
+    container.classList.add('screen-blur');
+    setTimeout(() => container.classList.remove('screen-blur'), 2000);
+}
+
+function typeMessage(bubbleId, text, emotion = 'neutral') {
+        if (tremorEmotions.includes(emotion)) {
+            bubble.classList.add('tremor');
+        } else {
+            bubble.classList.remove('tremor');
+        }
+    }
+    
+function typeNextCharacter() {
         if (characterIndex >= fullText.length) {
             bubble.classList.remove('tremor'); // Remove tremor at end
             return;
@@ -860,7 +1031,7 @@ function typeMessageWithEmotions(bubbleId, fullText, emotion_timeline) {
     }
     
     typeNextCharacter();
-}
+
 
 function typeMessage(bubbleId, text, emotion = 'neutral') {
     // Fallback typing without emotion timeline

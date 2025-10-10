@@ -3,6 +3,109 @@
    Each emotion has unique bubble animations
    ============================================ */
 
+/* LIVE STATUS INDICATOR */
+.chat-header {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.8) 0%, rgba(118, 75, 162, 0.8) 100%);
+    color: white;
+    padding: 20px;
+    border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+    position: relative;
+    backdrop-filter: blur(10px);
+}
+
+.header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 20px;
+}
+
+.header-title {
+    flex: 1;
+}
+
+.live-status {
+    flex-shrink: 0;
+}
+
+.status-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-family: 'Courier New', monospace;
+    backdrop-filter: blur(5px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #4CAF50;
+    animation: statusPulse 2s ease-in-out infinite;
+    box-shadow: 0 0 10px currentColor;
+}
+
+@keyframes statusPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(0.9); }
+}
+
+.status-text {
+    font-weight: 500;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* Status color variations */
+.status-indicator[data-status="sleeping"] .status-dot {
+    background: #9B59B6;
+}
+
+.status-indicator[data-status="school"] .status-dot {
+    background: #3498DB;
+}
+
+.status-indicator[data-status="studying"] .status-dot {
+    background: #3498DB;
+}
+
+.status-indicator[data-status="dinner"] .status-dot {
+    background: #E74C3C;
+}
+
+.status-indicator[data-status="visiting_dad"] .status-dot {
+    background: #9B59B6;
+}
+
+.status-indicator[data-status="free_time"] .status-dot {
+    background: #1ABC9C;
+}
+
+.status-indicator[data-status="available"] .status-dot {
+    background: #E91E63;
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+    .header-content {
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .live-status {
+        width: 100%;
+    }
+    
+    .status-indicator {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
 /* HAPPY & EXCITED EMOTIONS - Bouncy, energetic */
 .emotion-happy {
     animation: happyBounce 0.6s ease infinite;
