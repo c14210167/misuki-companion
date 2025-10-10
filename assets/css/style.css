@@ -338,24 +338,17 @@ body {
     50% { transform: translateY(-20px) rotate(10deg); }
 }
 
-/* Find this section in your assets/css/style.css */
-
 .misuki-image {
     width: 100%;
     max-width: 350px;
-    transition: all 0.3s ease;
     filter: drop-shadow(0 10px 20px rgba(0,0,0,0.3));
-    /* REMOVE THIS LINE: */
-    /* image-rendering: pixelated; */
-    
-    /* REPLACE WITH THIS FOR HD/SMOOTH RENDERING: */
     image-rendering: auto;
     image-rendering: -webkit-optimize-contrast;
     image-rendering: crisp-edges;
     -ms-interpolation-mode: bicubic;
-    
     z-index: 5;
 }
+
 .misuki-mood {
     margin-top: 20px;
     font-size: 0.9rem;
@@ -450,10 +443,29 @@ body {
     background: rgba(102, 126, 234, 0.7);
 }
 
+/* Date Separator */
+.date-separator {
+    display: flex;
+    justify-content: center;
+    margin: 30px 0 20px 0;
+}
+
+.date-separator span {
+    background: rgba(0, 0, 0, 0.4);
+    color: rgba(255, 255, 255, 0.7);
+    padding: 8px 20px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-family: 'Press Start 2P', cursive;
+    backdrop-filter: blur(5px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
 .message {
     margin-bottom: 20px;
     display: flex;
     animation: slideIn 0.4s ease;
+    width: 100%;
 }
 
 @keyframes slideIn {
@@ -489,6 +501,8 @@ body {
     line-height: 1.6;
     position: relative;
     border-radius: 15px;
+    width: fit-content;
+    display: inline-block;
 }
 
 .message.misuki .message-bubble {
@@ -520,6 +534,7 @@ body {
     border: 2px solid rgba(255, 255, 255, 0.2);
     box-shadow: 0 4px 15px rgba(0,0,0,0.2);
     backdrop-filter: blur(10px);
+    margin-left: auto;
 }
 
 .message-sender {
@@ -528,6 +543,14 @@ body {
     font-weight: bold;
     font-family: 'Press Start 2P', cursive;
     color: rgba(255, 255, 255, 0.7);
+}
+
+/* Message Timestamp */
+.message-time {
+    font-size: 0.65rem;
+    color: rgba(255, 255, 255, 0.5);
+    margin-top: 5px;
+    font-family: 'Courier New', monospace;
 }
 
 /* Typing Indicator */
@@ -583,6 +606,61 @@ body {
     display: flex;
     gap: 10px;
     backdrop-filter: blur(10px);
+    align-items: center;
+}
+
+.attach-button {
+    padding: 15px 20px;
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-radius: 10px;
+    font-size: 1.2rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.attach-button:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: translateY(-2px);
+}
+
+.file-preview {
+    margin: 10px 20px;
+    padding: 10px 15px;
+    background: rgba(102, 126, 234, 0.2);
+    border: 2px solid rgba(102, 126, 234, 0.5);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    animation: slideIn 0.3s ease;
+}
+
+.file-preview-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 0.9rem;
+}
+
+.file-preview-content button {
+    background: rgba(255, 255, 255, 0.2);
+    border: none;
+    color: white;
+    padding: 5px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    margin-left: 15px;
+    transition: all 0.2s;
+}
+
+.file-preview-content button:hover {
+    background: rgba(255, 0, 0, 0.5);
 }
 
 .chat-input input {

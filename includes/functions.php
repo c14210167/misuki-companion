@@ -246,6 +246,8 @@ function getRecentMemories($db, $user_id, $days = 7) {
 
 // ==================== CONTEXT BUILDING ====================
 
+// Replace the buildContextForAI function in includes/functions.php
+
 function buildContextForAI($memories, $conversations, $emotional_context) {
     $context = "=== What I Remember About You ===\n\n";
     
@@ -288,12 +290,20 @@ function buildContextForAI($memories, $conversations, $emotional_context) {
     }
     
     if (!empty($conversations) && count($conversations) > 0) {
-        $context .= "\n=== Recent Conversation Highlights ===\n";
-        $recent = array_slice($conversations, -3); // Last 3 messages
-        foreach ($recent as $conv) {
-            $context .= "You: " . substr($conv['user_message'], 0, 100) . "\n";
-            $context .= "Me: " . substr($conv['misuki_response'], 0, 100) . "\n\n";
+        $context .= "\n=== RECENT CONVERSATION HISTORY (MOST IMPORTANT - READ CAREFULLY) ===\n";
+        $context .= "This is your ONGOING conversation with Dan. Pay close attention to the flow:\n\n";
+        
+        // Show ALL recent conversations for better context
+        foreach ($conversations as $index => $conv) {
+            $timestamp = date('M j, g:i A', strtotime($conv['timestamp']));
+            $context .= "[$timestamp]\n";
+            $context .= "Dan: " . $conv['user_message'] . "\n";
+            $context .= "You: " . $conv['misuki_response'] . "\n\n";
         }
+        
+        $context .= "^^^ This is your recent conversation history. The MOST RECENT messages are at the BOTTOM.\n";
+        $context .= "CRITICAL: When Dan asks 'do you remember what I was doing yesterday?', look at the conversation history above!\n";
+        $context .= "CRITICAL: When Dan gives you a short answer like '10', look at YOUR LAST QUESTION to understand the context!\n\n";
     }
     
     return $context;

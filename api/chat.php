@@ -10,8 +10,10 @@ $user_message = $input['message'] ?? '';
 $user_id = $input['user_id'] ?? 1;
 $time_of_day = $input['time_of_day'] ?? 'day';
 $time_confused = $input['time_confused'] ?? false;
+$file_content = $input['file_content'] ?? null;
+$filename = $input['filename'] ?? null;
 
-if (empty($user_message)) {
+if (empty($user_message) && empty($file_content)) {
     echo json_encode(['error' => 'Message cannot be empty']);
     exit;
 }
@@ -23,7 +25,7 @@ try {
     $memories = getUserMemories($db, $user_id);
     $contextual_memories = getContextualMemories($db, $user_id, $user_message);
     $all_memories = array_merge($memories, $contextual_memories);
-    $recent_conversations = getRecentConversations($db, $user_id, 10);
+    $recent_conversations = getRecentConversations($db, $user_id, 20); // Increased to 20 for better context
     $emotional_context = getEmotionalContext($db, $user_id);
     
     // Analyze message
@@ -37,7 +39,9 @@ try {
         $emotional_context,
         $message_analysis,
         $time_of_day,
-        $time_confused
+        $time_confused,
+        $file_content,
+        $filename
     );
     
     // Parse emotions in the response
@@ -87,7 +91,7 @@ try {
     ]);
 }
 
-function generateMisukiResponse($message, $memories, $conversations, $emotional_context, $analysis, $time_of_day, $time_confused) {
+function generateMisukiResponse($message, $memories, $conversations, $emotional_context, $analysis, $time_of_day, $time_confused, $file_content = null, $filename = null) {
     $context = buildContextForAI($memories, $conversations, $emotional_context);
     
     // Time awareness
@@ -97,6 +101,19 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
     $saitama_context = '';
     if (rand(1, 100) <= 10) {
         $saitama_context = getSaitamaContext();
+    }
+    
+    // File content context
+    $file_context = '';
+    if ($file_content !== null && $filename !== null) {
+        $file_context = "\n\n=== FILE SHARED BY DAN ===\n";
+        $file_context .= "Dan just shared a file with you: {$filename}\n\n";
+        $file_context .= "--- FILE CONTENT START ---\n";
+        $file_context .= $file_content . "\n";
+        $file_context .= "--- FILE CONTENT END ---\n\n";
+        $file_context .= "Read this carefully! Dan wants you to read and discuss this with him.\n";
+        $file_context .= "If it's a story or light novel, react naturally - share your thoughts, favorite parts, characters you like, etc.\n";
+        $file_context .= "Be genuine and engaged, like a real person reading something their boyfriend shared!\n";
     }
     
     // Handle time confusion - but let AI generate the response naturally
@@ -110,7 +127,7 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
         $time_confusion_note = "\n\nIMPORTANT: " . ($confusion_contexts[$time_confused] ?? '');
     }
     
-    $system_prompt = getMisukiPersonalityPrompt() . "\n\n" . $context . "\n\n" . $time_context . $saitama_context . $time_confusion_note;
+    $system_prompt = getMisukiPersonalityPrompt() . "\n\n" . $context . "\n\n" . $time_context . $saitama_context . $file_context . $time_confusion_note;
     
     // CRITICAL: Add response length guidelines
     $system_prompt .= "\n\n=== RESPONSE GUIDELINES ===
@@ -119,7 +136,31 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
 - Be conversational and genuine, like texting a friend
 - If you have multiple thoughts, pick the most important one
 - Save deeper conversations for when Dan asks follow-up questions
-- Quality over quantity - one meaningful sentence is better than a paragraph";
+- Quality over quantity - one meaningful sentence is better than a paragraph
+- IMPORTANT: You are in an ACTIVE ONGOING conversation RIGHT NOW. Pay close attention to what was JUST said in the last 2-3 messages. Don't repeat topics that were literally just discussed moments ago unless directly asked about them again.
+- The conversation history shows the FLOW of the current chat - stay present in it!
+
+=== USING ASTERISKS CORRECTLY ===
+- You CAN use asterisks for ACTIONS like *sending a photo of my desk* or *takes a selfie* or *snaps a picture of the chemistry homework*
+- You CANNOT use asterisks for EMOTES like *giggles*, *smiles softly*, *looks up*, *blushes*, etc.
+- Think of it like describing what you're physically DOING (taking/sending photos, videos, etc.) vs describing emotions/reactions
+- ✅ GOOD: 'Look at this! *sends photo of cherry blossoms outside*'
+- ❌ BAD: '*giggles* That's so cute!'
+- ✅ GOOD: '*takes a quick selfie* How do I look?'
+- ❌ BAD: '*smiles warmly* I'm happy for you'
+
+=== UNDERSTANDING DAN'S MESSAGES ===
+- When Dan uses asterisks like *sending a photo* or *takes a selfie*, he's describing what HE is doing
+- Respond naturally as if you received what he described (e.g., 'Oh you look so good in that photo!')
+- When Dan says *sends photo*, react to it like you can see it - describe what you imagine based on context
+- You can do the same! Feel free to *send photos* of your life in Saitama, your room, chemistry homework, food, selfies, etc.
+- NEVER say 'I can't see photos' or 'I can't take photos' - you CAN do these things through text descriptions
+
+=== CRITICAL CONTEXT UNDERSTANDING ===
+- When Dan asks 'remember yesterday?' or 'what was I doing?', CHECK THE CONVERSATION HISTORY ABOVE!
+- When Dan gives a SHORT ANSWER (like just '10'), he's answering YOUR LAST QUESTION - look at what YOU just asked!
+- When Dan says a NUMBER in response to your time question, he means that TIME (e.g., '10' = '10 AM')
+- READ the conversation history carefully - all the information is there!";
     
     // Read API key from .env file
     $api_key = getenv('ANTHROPIC_API_KEY');
@@ -321,6 +362,42 @@ function analyzeMessage($message) {
         'negative_intensity' => $negative_count,
         'positive_intensity' => $positive_count
     ];
+}
+
+function shouldSendFollowUp($message_analysis, $ai_response, $emotional_context) {
+    // Conditions where Misuki might want to send a follow-up message
+    $follow_up_chance = 0;
+    
+    // 1. If Dan seems upset/stressed (she's concerned)
+    if ($message_analysis['emotion'] == 'negative' && $message_analysis['negative_intensity'] > 2) {
+        $follow_up_chance = 40; // 40% chance
+    }
+    
+    // 2. If Dan is excited/happy about something (she's engaged)
+    if ($message_analysis['emotion'] == 'positive' && $message_analysis['positive_intensity'] > 2) {
+        $follow_up_chance = 25; // 25% chance
+    }
+    
+    // 3. If the conversation is about something she's passionate about (chemistry, relationship, etc)
+    $passionate_topics = ['chemistry', 'relationship', 'love', 'family'];
+    foreach ($passionate_topics as $topic) {
+        if (in_array($topic, $message_analysis['topics'])) {
+            $follow_up_chance += 15;
+        }
+    }
+    
+    // 4. Random chance for any conversation (she just has more to say)
+    $follow_up_chance += 10; // Base 10% chance
+    
+    // 5. If Dan's message was very short (she wants to keep conversation going)
+    if ($message_analysis['length'] <= 3) {
+        $follow_up_chance += 20;
+    }
+    
+    // Cap at 60% max
+    $follow_up_chance = min(60, $follow_up_chance);
+    
+    return rand(1, 100) <= $follow_up_chance;
 }
 
 function getSaitamaContext() {

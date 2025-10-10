@@ -83,7 +83,18 @@
                 <span></span>
             </div>
 
+            <!-- Replace the chat-input section in your chat.php with this -->
             <div class="chat-input">
+                <input 
+                    type="file" 
+                    id="fileInput" 
+                    accept=".txt,.pdf,.doc,.docx,.md"
+                    style="display: none;"
+                    onchange="handleFileSelect(event)"
+                >
+                <button class="attach-button" onclick="document.getElementById('fileInput').click()" title="Attach file">
+                    📎
+                </button>
                 <input 
                     type="text" 
                     id="messageInput" 
@@ -91,6 +102,14 @@
                     onkeypress="handleKeyPress(event)"
                 >
                 <button onclick="sendMessage()">SEND</button>
+            </div>
+
+            <!-- Add this right after the typing indicator -->
+            <div class="file-preview" id="filePreview" style="display: none;">
+                <div class="file-preview-content">
+                    <span id="filePreviewText">📄 File attached</span>
+                    <button onclick="removeFile()">✕</button>
+                </div>
             </div>
         </div>
     </div>

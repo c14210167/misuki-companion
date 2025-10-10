@@ -60,48 +60,105 @@ const moodImages = {
 
 // Load chat history on page load
 async function loadChatHistory() {
+    console.log('🔄 Loading chat history...');
+    
     try {
-        const response = await fetch('api/get_history.php', {
+        // Add cache-busting timestamp
+        const timestamp = new Date().getTime();
+        
+        const response = await fetch(`api/get_history.php?t=${timestamp}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
                 user_id: 1,
-                limit: 50
-            })
+                limit: 100 // Increased to 100 to make sure we get everything
+            }),
+            cache: 'no-cache' // Force no cache
         });
 
         const data = await response.json();
+        console.log('📦 Received data:', data);
+        console.log(`📊 Total messages in response: ${data.conversations?.length || 0}`);
         
         if (data.success && data.conversations.length > 0) {
+            console.log(`✅ Loading ${data.conversations.length} messages`);
+            
+            // Log first and last message timestamps
+            const firstMsg = data.conversations[0];
+            const lastMsg = data.conversations[data.conversations.length - 1];
+            console.log(`📅 First message: ${firstMsg.timestamp}`);
+            console.log(`📅 Last message: ${lastMsg.timestamp}`);
+            
             // Clear the default greeting
             chatMessages.innerHTML = '';
             
-            // Add all previous conversations
-            data.conversations.forEach(conv => {
-                addMessageInstant('user', conv.user_message);
-                addMessageInstant('misuki', conv.misuki_response);
+            let lastDate = null;
+            
+            // Add all previous conversations with date separators
+            data.conversations.forEach((conv, index) => {
+                const msgDate = new Date(conv.timestamp);
+                const dateStr = msgDate.toLocaleDateString('en-US', { 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric' 
+                });
+                
+                if (index < 3 || index >= data.conversations.length - 3) {
+                    // Log first 3 and last 3 messages
+                    console.log(`Message ${index + 1}/${data.conversations.length}: ${dateStr} ${msgDate.toLocaleTimeString()} - "${conv.user_message.substring(0, 50)}..."`);
+                }
+                
+                // Add date separator if day changed
+                if (dateStr !== lastDate) {
+                    addDateSeparator(dateStr);
+                    lastDate = dateStr;
+                    lastMessageDate = dateStr; // Update global tracker
+                }
+                
+                addMessageInstant('user', conv.user_message, conv.timestamp);
+                addMessageInstant('misuki', conv.misuki_response, conv.timestamp);
             });
             
             // Scroll to bottom
             chatMessages.scrollTop = chatMessages.scrollHeight;
+            console.log('✅ Chat history loaded successfully');
+            console.log(`🎯 Last date displayed: ${lastMessageDate}`);
+        } else {
+            console.log('ℹ️ No chat history found or empty');
         }
     } catch (error) {
-        console.error('Error loading chat history:', error);
+        console.error('❌ Error loading chat history:', error);
         // Keep the default greeting if history fails to load
     }
 }
 
+// Add date separator
+function addDateSeparator(dateStr) {
+    const separator = document.createElement('div');
+    separator.className = 'date-separator';
+    separator.innerHTML = `<span>${dateStr}</span>`;
+    chatMessages.appendChild(separator);
+}
+
 // Add message instantly (for loading history)
-function addMessageInstant(sender, text) {
+function addMessageInstant(sender, text, timestamp) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${sender}`;
+    
+    const time = new Date(timestamp);
+    const timeStr = time.toLocaleTimeString('en-US', { 
+        hour: 'numeric', 
+        minute: '2-digit',
+        hour12: true 
+    });
     
     messageDiv.innerHTML = `
         <div>
             <div class="message-sender">${sender === 'user' ? 'You' : 'Misuki'}</div>
             <div class="message-bubble">${text}</div>
+            <div class="message-time">${timeStr}</div>
         </div>
     `;
     chatMessages.appendChild(messageDiv);
@@ -113,33 +170,53 @@ function animateEmotionTimeline(emotion_timeline) {
     
     let currentIndex = 0;
     let lastEmotionChangeTime = Date.now();
-    const MIN_EMOTION_DISPLAY_TIME = 1000; // Minimum 1 second per emotion
+    const MIN_EMOTION_DISPLAY_TIME = 1500; // Minimum 1.5 seconds per emotion (increased from 1 second)
+    
+    // Filter out emotions that would be displayed for less than minimum time
+    const filteredTimeline = [];
+    for (let i = 0; i < emotion_timeline.length; i++) {
+        const durationMs = emotion_timeline[i].duration * 1000;
+        
+        // Only include emotions that will be visible for at least the minimum time
+        if (durationMs >= MIN_EMOTION_DISPLAY_TIME) {
+            filteredTimeline.push(emotion_timeline[i]);
+        } else {
+            // If this emotion is too short, add its duration to the next one
+            if (i + 1 < emotion_timeline.length) {
+                emotion_timeline[i + 1].duration += emotion_timeline[i].duration;
+            }
+        }
+    }
+    
+    // If we filtered everything out, just use the last emotion
+    if (filteredTimeline.length === 0) {
+        const lastEmotion = emotion_timeline[emotion_timeline.length - 1].emotion;
+        updateMisukiMood(lastEmotion, getEmotionText(lastEmotion));
+        return;
+    }
     
     function changeExpression() {
-        if (currentIndex >= emotion_timeline.length) {
+        if (currentIndex >= filteredTimeline.length) {
             // End of timeline, set to last emotion
-            const lastEmotion = emotion_timeline[emotion_timeline.length - 1].emotion;
+            const lastEmotion = filteredTimeline[filteredTimeline.length - 1].emotion;
             updateMisukiMood(lastEmotion, getEmotionText(lastEmotion));
             return;
         }
         
-        const current = emotion_timeline[currentIndex];
+        const current = filteredTimeline[currentIndex];
         const currentDuration = current.duration * 1000; // Convert to milliseconds
         
-        // Only change emotion if it will be displayed for at least 1 second
-        if (currentDuration >= MIN_EMOTION_DISPLAY_TIME) {
-            updateMisukiMood(current.emotion, getEmotionText(current.emotion));
-            lastEmotionChangeTime = Date.now();
-        }
+        updateMisukiMood(current.emotion, getEmotionText(current.emotion));
+        lastEmotionChangeTime = Date.now();
         
         currentIndex++;
         
         // Schedule next expression change
-        if (currentIndex < emotion_timeline.length) {
+        if (currentIndex < filteredTimeline.length) {
             setTimeout(changeExpression, currentDuration);
         } else {
             // Set final emotion after everything is done
-            const lastEmotion = emotion_timeline[emotion_timeline.length - 1].emotion;
+            const lastEmotion = filteredTimeline[filteredTimeline.length - 1].emotion;
             updateMisukiMood(lastEmotion, getEmotionText(lastEmotion));
         }
     }
@@ -399,15 +476,107 @@ function handleKeyPress(event) {
     }
 }
 
+let lastMessageDate = null; // Track last message date for separators
+let attachedFile = null; // Track attached file
+let userIsTyping = false; // Track if user is currently typing
+let followUpTimeout = null; // Track follow-up timeout
+
+// Track when user is typing
+messageInput.addEventListener('input', () => {
+    userIsTyping = messageInput.value.trim().length > 0;
+});
+
+messageInput.addEventListener('focus', () => {
+    userIsTyping = true;
+});
+
+messageInput.addEventListener('blur', () => {
+    setTimeout(() => {
+        userIsTyping = messageInput.value.trim().length > 0;
+    }, 100);
+});
+
+function handleFileSelect(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const filePreview = document.getElementById('filePreview');
+    const filePreviewText = document.getElementById('filePreviewText');
+    
+    // Show preview
+    filePreviewText.textContent = `📄 ${file.name}`;
+    filePreview.style.display = 'block';
+    
+    // Upload file
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('user_id', 1);
+    
+    fetch('api/upload_file.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            attachedFile = {
+                filename: data.filename,
+                content: data.content,
+                word_count: data.word_count,
+                truncated: data.truncated
+            };
+            console.log('✅ File uploaded:', data);
+            
+            if (data.truncated) {
+                filePreviewText.textContent = `📄 ${file.name} (first 50k chars)`;
+            }
+        } else {
+            alert('Error uploading file: ' + data.error);
+            removeFile();
+        }
+    })
+    .catch(error => {
+        console.error('Upload error:', error);
+        alert('Failed to upload file');
+        removeFile();
+    });
+}
+
+function removeFile() {
+    attachedFile = null;
+    document.getElementById('filePreview').style.display = 'none';
+    document.getElementById('fileInput').value = '';
+}
+
 function addMessage(sender, text, emotion_timeline = null) {
+    // Check if we need a date separator
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('en-US', { 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+    });
+    
+    if (dateStr !== lastMessageDate) {
+        addDateSeparator(dateStr);
+        lastMessageDate = dateStr;
+    }
+    
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${sender}`;
     
     const bubbleId = 'bubble-' + Date.now();
+    const timeStr = now.toLocaleTimeString('en-US', { 
+        hour: 'numeric', 
+        minute: '2-digit',
+        hour12: true 
+    });
+    
     messageDiv.innerHTML = `
         <div>
             <div class="message-sender">${sender === 'user' ? 'You' : 'Misuki'}</div>
             <div class="message-bubble" id="${bubbleId}"></div>
+            <div class="message-time">${timeStr}</div>
         </div>
     `;
     chatMessages.appendChild(messageDiv);
@@ -649,28 +818,48 @@ function detectTimeConfusion(message, timeOfDay) {
 
 async function sendMessage() {
     const message = messageInput.value.trim();
-    if (!message) return;
+    if (!message && !attachedFile) return;
 
     const timeOfDay = getTimeOfDay();
     const timeConfused = detectTimeConfusion(message, timeOfDay);
+    
+    // Build message text
+    let fullMessage = message;
+    if (attachedFile) {
+        fullMessage = `[File attached: ${attachedFile.filename}]\n\n${message || 'Here\'s the file!'}`;
+    }
 
-    addMessage('user', message);
+    addMessage('user', fullMessage);
     messageInput.value = '';
+    
+    // Remove file preview after sending
+    if (attachedFile) {
+        removeFile();
+    }
 
     typingIndicator.classList.add('active');
 
     try {
+        const requestBody = {
+            message: message || 'Here\'s the file!',
+            user_id: 1,
+            time_of_day: timeOfDay,
+            time_confused: timeConfused
+        };
+        
+        // Add file content if attached
+        if (attachedFile) {
+            requestBody.file_content = attachedFile.content;
+            requestBody.filename = attachedFile.filename;
+            requestBody.word_count = attachedFile.word_count;
+        }
+        
         const response = await fetch('api/chat.php', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-                message: message,
-                user_id: 1,
-                time_of_day: timeOfDay,
-                time_confused: timeConfused
-            })
+            body: JSON.stringify(requestBody)
         });
 
         const data = await response.json();
@@ -679,6 +868,11 @@ async function sendMessage() {
             typingIndicator.classList.remove('active');
             addMessage('misuki', data.response, data.emotion_timeline);
             updateMisukiMood(data.mood, data.mood_text);
+            
+            // Check if she wants to send follow-up messages
+            if (data.should_follow_up) {
+                scheduleFollowUp(0); // Start with count 0
+            }
         }, 1000 + Math.random() * 1500);
 
     } catch (error) {
@@ -687,4 +881,60 @@ async function sendMessage() {
         addMessage('misuki', "Oh no... I'm having trouble thinking right now. Could you try again? 💭");
         updateMisukiMood('concerned', 'Worried');
     }
+}
+
+async function scheduleFollowUp(followUpCount) {
+    // Random delay between 2-5 seconds (like natural texting)
+    const delay = 2000 + Math.random() * 3000;
+    
+    followUpTimeout = setTimeout(async () => {
+        // Check if user started typing - if so, cancel follow-up
+        if (userIsTyping) {
+            console.log('User is typing, canceling follow-up');
+            return;
+        }
+        
+        // Show typing indicator
+        typingIndicator.classList.add('active');
+        
+        // Wait a bit (she's "typing")
+        setTimeout(async () => {
+            try {
+                const response = await fetch('api/get_follow_up.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        user_id: 1,
+                        follow_up_count: followUpCount
+                    })
+                });
+                
+                const data = await response.json();
+                
+                typingIndicator.classList.remove('active');
+                
+                if (data.success) {
+                    // Check again if user started typing
+                    if (userIsTyping) {
+                        console.log('User started typing, not sending follow-up');
+                        return;
+                    }
+                    
+                    addMessage('misuki', data.message, data.emotion_timeline);
+                    updateMisukiMood(data.mood, data.mood_text);
+                    
+                    // Check if she wants to send ANOTHER follow-up
+                    if (data.should_continue && followUpCount < 2) {
+                        scheduleFollowUp(followUpCount + 1);
+                    }
+                }
+            } catch (error) {
+                console.error('Follow-up error:', error);
+                typingIndicator.classList.remove('active');
+            }
+        }, 1000 + Math.random() * 1000); // Typing time
+        
+    }, delay);
 }
