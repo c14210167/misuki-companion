@@ -34,6 +34,7 @@ const moodImages = {
     confused: 'assets/images/misuki-confused.png',
     flustered: 'assets/images/misuki-flustered.png',
     amazed: 'assets/images/misuki-amazed.png',
+    shocked: 'assets/images/misuki-surprised.png',
     
     // Playful
     teasing: 'assets/images/misuki-teasing.png',
@@ -55,7 +56,8 @@ const moodImages = {
     sleepy: 'assets/images/misuki-sleepy.png',
     pouty: 'assets/images/misuki-pouty.png',
     relieved: 'assets/images/misuki-relieved.png',
-    dreamy: 'assets/images/misuki-dreamy.png'
+    dreamy: 'assets/images/misuki-dreamy.png',
+    curious: 'assets/images/misuki-thoughtful.png'
 };
 
 // Load chat history on page load
@@ -178,68 +180,126 @@ function addMessageInstant(sender, text, timestamp) {
     chatMessages.appendChild(messageDiv);
 }
 
-// Animate expression changes
+// Helper function for word count
+function str_word_count(str) {
+    return str.split(/\s+/).filter(word => word.length > 0).length;
+}
+
+// Animate expression changes - IMPROVED VERSION
 function animateEmotionTimeline(emotion_timeline) {
     if (!emotion_timeline || emotion_timeline.length === 0) return;
     
-    const MIN_EMOTION_DISPLAY_TIME = 2000; // Increased to 2 seconds (more stable)
+    const MIN_EMOTION_DISPLAY_TIME = 3000; // Increased to 3 seconds
     
-    // Pre-process: Filter and merge short emotions
-    const processedTimeline = [];
-    let accumulatedDuration = 0;
-    let lastValidEmotion = null;
+    // STEP 1: Merge consecutive identical emotions
+    const merged = [];
+    let current = null;
     
     for (let i = 0; i < emotion_timeline.length; i++) {
-        const current = emotion_timeline[i];
-        const durationMs = current.duration * 1000;
+        if (!current) {
+            current = { ...emotion_timeline[i] };
+        } else if (current.emotion === emotion_timeline[i].emotion) {
+            // Same emotion, merge duration
+            current.duration += emotion_timeline[i].duration;
+            current.sentence += ' ' + emotion_timeline[i].sentence;
+        } else {
+            // Different emotion, save current and start new
+            merged.push(current);
+            current = { ...emotion_timeline[i] };
+        }
+    }
+    if (current) merged.push(current);
+    
+    console.log(`🔗 Merged ${emotion_timeline.length} → ${merged.length} emotions (removed duplicates)`);
+    
+    // STEP 2: Filter out very short emotions and redistribute time
+    const filtered = [];
+    
+    for (let i = 0; i < merged.length; i++) {
+        const durationMs = merged[i].duration * 1000;
         
         if (durationMs >= MIN_EMOTION_DISPLAY_TIME) {
-            // This emotion is long enough to show
-            if (accumulatedDuration > 0 && lastValidEmotion) {
-                // Add accumulated time to this emotion
-                current.duration += accumulatedDuration / 1000;
-                accumulatedDuration = 0;
-            }
-            processedTimeline.push(current);
-            lastValidEmotion = current;
+            // Long enough, keep it
+            filtered.push(merged[i]);
         } else {
-            // Too short, accumulate the time
-            accumulatedDuration += durationMs;
+            // Too short, distribute time to neighbors
+            const half_time = merged[i].duration / 2;
             
-            // If this is the last emotion, or next emotion is long enough, 
-            // add accumulated time to the next valid emotion
-            if (i === emotion_timeline.length - 1 && lastValidEmotion) {
-                lastValidEmotion.duration += accumulatedDuration / 1000;
+            // Add to previous if exists
+            if (filtered.length > 0) {
+                filtered[filtered.length - 1].duration += half_time;
             }
+            
+            // Add to next if exists
+            if (i + 1 < merged.length) {
+                merged[i + 1].duration += half_time;
+            } else if (filtered.length > 0) {
+                // Last emotion is short, give all time to previous
+                filtered[filtered.length - 1].duration += merged[i].duration;
+            }
+            
+            console.log(`⏭️ Skipped short emotion: ${merged[i].emotion} (${durationMs}ms)`);
         }
     }
     
-    // If everything was filtered out, just use the last emotion
-    if (processedTimeline.length === 0) {
+    // STEP 3: If message is very short (< 10 words), use SINGLE dominant emotion
+    const total_words = emotion_timeline.reduce((sum, e) => sum + str_word_count(e.sentence), 0);
+    
+    if (total_words < 10 && filtered.length > 1) {
+        // Pick the most prominent emotion (longest duration or most intense)
+        const emotion_priority = {
+            'shocked': 10, 'surprised': 9, 'excited': 9,
+            'sad': 8, 'upset': 8, 'concerned': 8,
+            'loving': 7, 'affectionate': 7,
+            'happy': 6, 'playful': 6,
+            'thoughtful': 5, 'curious': 5,
+            'gentle': 3, 'neutral': 1
+        };
+        
+        let best = filtered[0];
+        let best_score = (filtered[0].duration * 1000) + (emotion_priority[filtered[0].emotion] || 0) * 100;
+        
+        for (let i = 1; i < filtered.length; i++) {
+            const score = (filtered[i].duration * 1000) + (emotion_priority[filtered[i].emotion] || 0) * 100;
+            if (score > best_score) {
+                best = filtered[i];
+                best_score = score;
+            }
+        }
+        
+        console.log(`🎯 Short message detected (${total_words} words) - using single emotion: ${best.emotion}`);
+        updateMisukiMood(best.emotion, getEmotionText(best.emotion));
+        return; // Don't animate, just set once
+    }
+    
+    // STEP 4: If everything was filtered out, use last emotion from original
+    if (filtered.length === 0) {
         const lastEmotion = emotion_timeline[emotion_timeline.length - 1].emotion;
         updateMisukiMood(lastEmotion, getEmotionText(lastEmotion));
+        console.log(`⚠️ All emotions filtered - using last: ${lastEmotion}`);
         return;
     }
     
-    console.log(`🎭 Filtered emotions: ${processedTimeline.length} shown (${emotion_timeline.length} total)`);
+    console.log(`✅ Final timeline: ${filtered.length} emotions (${emotion_timeline.length} → ${merged.length} → ${filtered.length})`);
     
+    // STEP 5: Animate the filtered emotions
     let currentIndex = 0;
     
     function changeExpression() {
-        if (currentIndex >= processedTimeline.length) {
+        if (currentIndex >= filtered.length) {
             return;
         }
         
-        const current = processedTimeline[currentIndex];
+        const current = filtered[currentIndex];
         const currentDuration = current.duration * 1000;
         
         updateMisukiMood(current.emotion, getEmotionText(current.emotion));
-        console.log(`😊 Showing ${current.emotion} for ${(currentDuration/1000).toFixed(1)}s`);
+        console.log(`😊 [${currentIndex + 1}/${filtered.length}] ${current.emotion} for ${(currentDuration/1000).toFixed(1)}s`);
         
         currentIndex++;
         
         // Schedule next expression change
-        if (currentIndex < processedTimeline.length) {
+        if (currentIndex < filtered.length) {
             setTimeout(changeExpression, currentDuration);
         }
     }
@@ -264,6 +324,7 @@ function getEmotionText(emotion) {
         pleading: 'Apologetic',
         
         surprised: 'Surprised!',
+        shocked: 'Shocked!',
         confused: 'Confused',
         flustered: 'Flustered',
         amazed: 'Amazed!',
@@ -283,6 +344,7 @@ function getEmotionText(emotion) {
         gentle: 'Gentle',
         
         thoughtful: 'Thinking',
+        curious: 'Curious',
         sleepy: 'Sleepy',
         pouty: 'Pouty',
         relieved: 'Relieved',
@@ -658,6 +720,7 @@ function typeMessageWithEmotions(bubbleId, fullText, emotion_timeline) {
             // Fast emotions
             'excited': 30,
             'surprised': 25,
+            'shocked': 25,
             'amazed': 35,
             'playful': 40,
             'giggling': 35,
@@ -668,6 +731,7 @@ function typeMessageWithEmotions(bubbleId, fullText, emotion_timeline) {
             'thoughtful': 55,
             'gentle': 50,
             'content': 50,
+            'curious': 55,
             
             // Slow emotions
             'sad': 80,
