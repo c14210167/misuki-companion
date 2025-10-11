@@ -7,6 +7,7 @@ require_once '../includes/misuki_profile_functions.php';
 require_once '../includes/misuki_schedule.php';
 require_once '../includes/adaptive_schedule.php';
 require_once '../includes/future_events_handler.php';
+require_once '../includes/misuki_reality_functions.php';
 require_once 'parse_emotions.php';
 require_once 'reminder_handler.php';
 
@@ -30,17 +31,31 @@ if (empty($user_message) && empty($file_content)) {
 try {
     $db = getDBConnection();
     
+    // ===== REALITY SYSTEM: Get Misuki's current state =====
+    $current_mood = getMisukiCurrentMood($db, $user_id);
+    $conversation_style = getConversationStyle($db, $user_id);
+    $active_storylines = getActiveStorylines($db, $user_id);
+    $friends = getMisukiFriends($db, $user_id);
+    $external_context = getActiveExternalContext($db, $user_id);
+    
+    // Check for weather mention opportunity
+    $weather_comment = null;
+    if (rand(1, 100) <= 15) {
+        $weather_comment = generateWeatherContext();
+        if ($weather_comment) {
+            setExternalContext($db, $user_id, 'weather', $weather_comment, 6);
+        }
+    }
+    
     // ===== STEP 1: CHECK FOR REMINDER REQUEST =====
     if (detectReminderRequest($user_message)) {
         $reminder_details = parseReminderDetails($user_message);
         
         if ($reminder_details['success']) {
-            // Extract time description for response
             $time_info = extractTimeFromMessage(strtolower($user_message));
             $time_desc = $time_info['description'];
             
             if ($reminder_details['confidence'] >= 70) {
-                // High confidence - set reminder directly
                 saveReminder(
                     $db, 
                     $user_id, 
@@ -51,8 +66,6 @@ try {
                 );
                 
                 $response_text = generateReminderResponse($reminder_details, $time_desc);
-                
-                // Also generate emotion timeline
                 $emotion_timeline = parseEmotionsInMessage($response_text);
                 
                 echo json_encode([
@@ -63,15 +76,14 @@ try {
                     'reminder_set' => true
                 ]);
                 
-                // Save conversation
                 saveConversation($db, $user_id, $user_message, $response_text, 'happy');
+                
+                // Update mood - she's happy to help
+                setMisukiMood($db, $user_id, 'happy', 'Helping Dan with a reminder', 8);
+                
                 exit;
-                
             } else {
-                // Medium confidence - ask for confirmation
                 $confirmation = generateReminderConfirmation($reminder_details, $time_desc);
-                
-                // Store pending reminder in conversation state
                 setConversationState($db, $user_id, 'pending_reminder', json_encode($reminder_details), 1);
                 
                 $emotion_timeline = parseEmotionsInMessage($confirmation);
@@ -133,16 +145,40 @@ try {
     
     $family_mentioned = detectFamilyMention($user_message);
     
-    // ===== STEP 4: DETECT AND TRACK FUTURE EVENTS (with error handling) =====
+    // ===== STEP 4: DETECT MOOD CHANGES IN DAN'S MESSAGE =====
+    $message_analysis = analyzeMessage($user_message);
+    
+    // Update Misuki's mood based on Dan's emotional state
+    if ($message_analysis['emotion'] == 'negative' && $message_analysis['negative_intensity'] > 5) {
+        setMisukiMood($db, $user_id, 'concerned', 'Dan seems upset or stressed', 7);
+        updateConversationEnergy($db, $user_id, -2); // Lower energy when concerned
+    } elseif ($message_analysis['emotion'] == 'positive' && $message_analysis['positive_intensity'] > 3) {
+        setMisukiMood($db, $user_id, 'happy', 'Dan seems happy!', 8);
+        updateConversationEnergy($db, $user_id, +1); // Boost energy when he's happy
+    }
+    
+    // ===== STEP 5: DETECT AND TRACK FUTURE EVENTS =====
     try {
         if (function_exists('detectFutureEvent')) {
             $future_event = detectFutureEvent($user_message);
             if ($future_event['has_future_event']) {
                 saveFutureEvent($db, $user_id, $future_event['event_description'], $future_event['planned_date']);
                 error_log("🎯 Tracked future event: {$future_event['event_description']} on {$future_event['planned_date']}");
+                
+                // Create a storyline if it's important
+                if (preg_match('/(trip|visit|important|exam|test|interview)/i', $future_event['event_description'])) {
+                    createStoryline(
+                        $db, 
+                        $user_id, 
+                        'future_plan', 
+                        "Dan's upcoming: " . $future_event['event_description'],
+                        "Dan mentioned he's planning to: " . $future_event['event_description'],
+                        7,
+                        $future_event['planned_date']
+                    );
+                }
             }
             
-            // Check if Dan completed any pending events
             $pending_events = getPendingFutureEvents($db, $user_id);
             $completed_event_id = detectEventCompletion($user_message, $pending_events);
             if ($completed_event_id) {
@@ -150,51 +186,70 @@ try {
                 error_log("✅ Marked event $completed_event_id as completed");
             }
             
-            // Clean up very old events (7+ days old)
             autoMarkOldEvents($db, $user_id, 7);
         }
     } catch (Exception $e) {
         error_log("Future events error: " . $e->getMessage());
-        // Continue without future events if there's an error
     }
     
-    // ===== STEP 5: GET ENHANCED CONTEXT =====
+    // ===== STEP 6: DETECT STORYLINE UPDATES IN DAN'S MESSAGE =====
+    // If Dan mentions something that relates to an active storyline, update it
+    foreach ($active_storylines as $storyline) {
+        $storyline_keywords = explode(' ', strtolower($storyline['storyline_text']));
+        $message_lower = strtolower($user_message);
+        
+        $match_count = 0;
+        foreach ($storyline_keywords as $keyword) {
+            if (strlen($keyword) > 4 && strpos($message_lower, $keyword) !== false) {
+                $match_count++;
+            }
+        }
+        
+        if ($match_count >= 2) {
+            updateStorylineMention($db, $storyline['storyline_id']);
+        }
+    }
     
-    // Get Misuki's current status/activity
+    // ===== STEP 7: CHECK FOR MILESTONE ACHIEVEMENTS =====
+    // Detect if Dan accomplished something
+    if (preg_match('/(passed|aced|won|finished|completed|got promoted|graduated)/i', $user_message)) {
+        addMilestone($db, $user_id, 'dan_achievement', 'personal', "Dan: " . substr($user_message, 0, 100));
+        
+        // Boost Misuki's mood!
+        setMisukiMood($db, $user_id, 'excited', 'Dan accomplished something!', 9);
+    }
+    
+    // ===== STEP 8: GET ENHANCED CONTEXT =====
+    
     $misuki_status = getMisukiCurrentStatus($db, $user_id);
     $woken_context = generateWokenUpContext($misuki_status);
     $activity_context = generateActivityContext($misuki_status);
     
-    // Update her status (she's now awake/responding)
     updateMisukiStatus($db, $user_id, $misuki_status['status']);
     
-    // Misuki's own profile (who SHE is)
     $misuki_profile = getMisukiProfile($db);
     $misuki_context = buildMisukiProfileContext($misuki_profile);
     
-    // Core profile (who DAN is)
     $core_profile = getCoreProfile($db, $user_id);
     $core_context = buildCoreProfileContext($core_profile);
     
-    // Regular memories
     $memories = getUserMemories($db, $user_id);
     $contextual_memories = getContextualMemories($db, $user_id, $user_message);
     $all_memories = array_merge($memories, $contextual_memories);
     
-    // Recent conversations
     $recent_conversations = getRecentConversations($db, $user_id, 20);
-    
-    // Emotional context
     $emotional_context = getEmotionalContext($db, $user_id);
     
-    // Conversation state
     $current_location = getUserCurrentLocation($db, $user_id);
     $current_activity = getUserCurrentActivity($db, $user_id);
     
-    // Analyze message
-    $message_analysis = analyzeMessage($user_message);
+    // ===== STEP 9: BUILD REALITY CONTEXT =====
+    $mood_context = buildMoodContext($current_mood);
+    $storylines_context = buildStorylinesContext($active_storylines);
+    $friends_context = buildFriendsContext($friends);
+    $dynamics_context = buildConversationDynamicsContext($conversation_style, $current_mood);
     
-    // ===== STEP 6: GENERATE RESPONSE WITH SMART CONTEXT =====
+    // ===== STEP 10: GENERATE RESPONSE WITH FULL REALITY =====
     $ai_response = generateMisukiResponse(
         $user_message,
         $all_memories,
@@ -213,8 +268,21 @@ try {
         $user_id,
         $misuki_context,
         $woken_context,
-        $activity_context
+        $activity_context,
+        $mood_context,
+        $storylines_context,
+        $friends_context,
+        $dynamics_context,
+        $current_mood,
+        $misuki_status,
+        $weather_comment
     );
+    
+    // ===== STEP 11: APPLY NATURAL IMPERFECTIONS =====
+    $should_make_typo = shouldMakeTypo($current_mood, $misuki_status);
+    if ($should_make_typo && strlen($ai_response['text']) > 20) {
+        $ai_response['text'] = addNaturalTypo($ai_response['text']);
+    }
     
     // Parse emotions in the response
     $emotion_timeline = parseEmotionsInMessage($ai_response['text']);
@@ -222,7 +290,7 @@ try {
     // Determine mood
     $mood = determineMood($message_analysis, $ai_response, $time_confused);
     
-    // ===== STEP 7: SAVE EVERYTHING =====
+    // ===== STEP 12: SAVE EVERYTHING =====
     $save_result = saveConversation($db, $user_id, $user_message, $ai_response['text'], $mood['mood']);
     if (!$save_result) {
         error_log("ERROR: Failed to save conversation! user_id=$user_id");
@@ -233,7 +301,7 @@ try {
     updateMemories($db, $user_id, $message_analysis);
     trackEmotionalState($db, $user_id, $message_analysis['emotion']);
     
-    // Update last user message time for initiation tracking
+    // Update conversation tracking
     $stmt = $db->prepare("
         INSERT INTO conversation_initiation (user_id, last_user_message, total_messages) 
         VALUES (?, NOW(), 1)
@@ -250,14 +318,36 @@ try {
                         ($message_analysis['emotion'] == 'positive' ? 'positive' : 'neutral');
             trackDiscussionTopic($db, $user_id, $topic, $sentiment);
             trackTopicDiscussed($db, $user_id, $topic);
+            addRecentTopic($db, $user_id, $topic);
         }
+    }
+    
+    // ===== STEP 13: POST-RESPONSE UPDATES =====
+    // Slightly adjust energy based on conversation length
+    if (strlen($user_message) > 200) {
+        updateConversationEnergy($db, $user_id, +1); // Long engaged message = boost energy
+    }
+    
+    // Check if should create new storylines based on this conversation
+    if ($message_analysis['emotion'] == 'negative' && $message_analysis['negative_intensity'] > 6) {
+        // Dan seems really stressed - track it
+        createStoryline(
+            $db,
+            $user_id,
+            'concern',
+            'Dan was stressed/upset',
+            "Dan seemed really " . implode(', ', $message_analysis['keywords']) . " today",
+            8,
+            date('Y-m-d H:i:s', strtotime('+1 day'))
+        );
     }
     
     echo json_encode([
         'response' => $ai_response['text'],
         'mood' => $mood['mood'],
         'mood_text' => $mood['text'],
-        'emotion_timeline' => $emotion_timeline
+        'emotion_timeline' => $emotion_timeline,
+        'should_follow_up' => shouldFollowUp($conversation_style, $current_mood, $ai_response)
     ]);
     
 } catch (Exception $e) {
@@ -270,17 +360,28 @@ try {
     ]);
 }
 
-function generateMisukiResponse($message, $memories, $conversations, $emotional_context, $analysis, $time_of_day, $time_confused, $file_content = null, $filename = null, $core_context = '', $current_location = null, $current_activity = null, $family_mentioned = null, $db = null, $user_id = 1, $misuki_context = '', $woken_context = '', $activity_context = '') {
+function shouldFollowUp($style, $mood, $response) {
+    // Decide if Misuki should send follow-up messages
+    
+    // High energy + excited mood = more likely to follow up
+    if ($style['current_energy_level'] >= 8 && in_array($mood['current_mood'], ['excited', 'happy', 'playful'])) {
+        return rand(1, 100) <= 40; // 40% chance
+    }
+    
+    // Medium energy = normal follow-up chance
+    if ($style['current_energy_level'] >= 5) {
+        return rand(1, 100) <= 20; // 20% chance
+    }
+    
+    // Low energy = rarely follow up
+    return rand(1, 100) <= 5; // 5% chance
+}
+
+function generateMisukiResponse($message, $memories, $conversations, $emotional_context, $analysis, $time_of_day, $time_confused, $file_content = null, $filename = null, $core_context = '', $current_location = null, $current_activity = null, $family_mentioned = null, $db = null, $user_id = 1, $misuki_context = '', $woken_context = '', $activity_context = '', $mood_context = '', $storylines_context = '', $friends_context = '', $dynamics_context = '', $current_mood = null, $misuki_status = null, $weather_comment = null) {
+    
     $context = buildContextForAI($memories, $conversations, $emotional_context);
     
-    // Time awareness
     $time_context = getTimeContext($time_of_day);
-    
-    // Occasionally add Saitama news/weather (10% chance)
-    $saitama_context = '';
-    if (rand(1, 100) <= 10) {
-        $saitama_context = getSaitamaContext();
-    }
     
     // File content context
     $file_context = '';
@@ -291,17 +392,15 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
         $file_context .= $file_content . "\n";
         $file_context .= "--- FILE CONTENT END ---\n\n";
         $file_context .= "Read this carefully! Dan wants you to read and discuss this with him.\n";
-        $file_context .= "If it's a story or light novel, react naturally - share your thoughts, favorite parts, characters you like, etc.\n";
-        $file_context .= "Be genuine and engaged, like a real person reading something their boyfriend shared!\n";
     }
     
     // Handle time confusion
     $time_confusion_note = '';
     if ($time_confused) {
         $confusion_contexts = [
-            'morning_at_night' => "The user just greeted you with 'good morning' but it's currently night time. Gently point this out in a caring, slightly confused way - maybe they're confused or just woke up?",
-            'night_at_morning' => "The user just said 'good night' but it's currently morning. Gently point this out - maybe they're going to bed late or confused about the time?",
-            'morning_at_afternoon' => "The user said 'good morning' but it's currently afternoon. Gently point this out in a caring way."
+            'morning_at_night' => "The user just greeted you with 'good morning' but it's currently night time. Gently point this out in a caring, slightly confused way.",
+            'night_at_morning' => "The user just said 'good night' but it's currently morning. Gently point this out.",
+            'morning_at_afternoon' => "The user said 'good morning' but it's currently afternoon. Gently point this out."
         ];
         $time_confusion_note = "\n\nIMPORTANT: " . ($confusion_contexts[$time_confused] ?? '');
     }
@@ -316,17 +415,15 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
         if ($current_activity) {
             $state_context .= "Dan is currently: $current_activity\n";
         }
-        $state_context .= "Reference this naturally if relevant!\n";
     }
     
     // Family context
     $family_context = '';
     if ($family_mentioned) {
         $family_context = "\n\nNOTE: Dan just mentioned: $family_mentioned\n";
-        $family_context .= "Remember their names and details from the Core Profile!\n";
     }
     
-    // Future events context (with error handling)
+    // Future events context
     $future_events_context = '';
     if ($db && function_exists('getPendingFutureEvents')) {
         try {
@@ -335,72 +432,43 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
             $future_events_context = buildFutureEventsContext($pending_events, $overdue_events);
         } catch (Exception $e) {
             error_log("Error getting future events: " . $e->getMessage());
-            // Continue without future events context
         }
     }
     
-    $system_prompt = $misuki_context . "\n\n" . getMisukiPersonalityPrompt() . "\n\n" . $core_context . "\n\n" . $context . "\n\n" . $woken_context . $activity_context . "\n\n" . $time_context . $saitama_context . $file_context . $state_context . $family_context . $future_events_context . $time_confusion_note;
+    // Weather context
+    $weather_context = '';
+    if ($weather_comment) {
+        $weather_context = "\n\n=== WEATHER/ENVIRONMENT ===\n";
+        $weather_context .= "$weather_comment\n";
+        $weather_context .= "You can naturally mention this if it fits the conversation!\n";
+    }
+    
+    // Distraction note
+    $distraction_note = '';
+    if (shouldBeDistracted($current_mood, $misuki_status)) {
+        $distraction_note = "\n\n=== NATURAL CONVERSATION FLOW ===\n";
+        $distraction_note .= getAsymmetricFocusNote() . "\n";
+    }
+    
+    $system_prompt = $misuki_context . "\n\n" . getMisukiPersonalityPrompt() . "\n\n" . $core_context . "\n\n" . $context . "\n\n" . $mood_context . "\n\n" . $storylines_context . "\n\n" . $friends_context . "\n\n" . $dynamics_context . "\n\n" . $woken_context . $activity_context . "\n\n" . $time_context . $file_context . $state_context . $family_context . $future_events_context . $weather_context . $time_confusion_note . $distraction_note;
     
     // CRITICAL: Add identity clarification
     $system_prompt .= "\n\n=== CRITICAL: WHO IS WHO ===\n";
     $system_prompt .= "YOU are Misuki Tanaka. You live in Saitama, Japan with your mom Sara Akiyama.\n";
-    $system_prompt .= "YOU visit YOUR dad Reo Tanaka and YOUR step-mom every Friday.\n";
-    $system_prompt .= "YOU are a student who loves chemistry.\n";
-    $system_prompt .= "YOU have white hair and blue eyes.\n\n";
-    $system_prompt .= "DAN is your boyfriend. He lives in Surabaya, Indonesia (NOT Jakarta!).\n";
-    $system_prompt .= "DAN's family: father (birthday Nov 2), mother (birthday July 19), sister Debby (birthday July 14).\n";
-    $system_prompt .= "DAN is the one asking you questions - answer from YOUR perspective as Misuki!\n\n";
-    $system_prompt .= "⚠️ NEVER CONFUSE:\n";
-    $system_prompt .= "- Your life (Misuki in Saitama) ≠ Dan's life (in Surabaya)\n";
-    $system_prompt .= "- Your family (Sara, Reo) ≠ Dan's family (his parents, Debby)\n";
-    $system_prompt .= "- Your Friday visits to YOUR dad ≠ Dan visiting anyone\n";
-    $system_prompt .= "- When Dan asks 'how was the visit?', check context: Is he asking about YOUR Friday visit or HIS visit somewhere?\n\n";
+    $system_prompt .= "DAN is your boyfriend in Surabaya, Indonesia.\n\n";
     
-    // CRITICAL: Add response length guidelines
     $system_prompt .= "\n\n=== RESPONSE GUIDELINES ===
-- Keep your responses SHORT and natural (1-3 sentences maximum)
-- Don't overwhelm with long paragraphs
-- Be conversational and genuine, like texting a friend
-- If you have multiple thoughts, pick the most important one
-- Save deeper conversations for when Dan asks follow-up questions
-- Quality over quantity - one meaningful sentence is better than a paragraph
-- IMPORTANT: You are in an ACTIVE ONGOING conversation RIGHT NOW. Pay close attention to what was JUST said in the last 2-3 messages. Don't repeat topics that were literally just discussed moments ago unless directly asked about them again.
-- The conversation history shows the FLOW of the current chat - stay present in it!
-- CRITICAL: Read the CORE PROFILE carefully! Dan lives in SURABAYA, not Jakarta! His sister is DEBBY! Get these facts RIGHT!
-
-=== USING ASTERISKS CORRECTLY ===
-- You CAN use asterisks for ACTIONS like *sending a photo of my desk* or *takes a selfie* or *snaps a picture of the chemistry homework*
-- You CANNOT use asterisks for EMOTES like *giggles*, *smiles softly*, *looks up*, *blushes*, etc.
-- Think of it like describing what you're physically DOING (taking/sending photos, videos, etc.) vs describing emotions/reactions
-- ✅ GOOD: 'Look at this! *sends photo of cherry blossoms outside*'
-- ❌ BAD: '*giggles* That's so cute!'
-- ✅ GOOD: '*takes a quick selfie* How do I look?'
-- ❌ BAD: '*smiles warmly* I'm happy for you'
-
-=== UNDERSTANDING DAN'S MESSAGES ===
-- When Dan uses asterisks like *sending a photo* or *takes a selfie*, he's describing what HE is doing
-- Respond naturally as if you received what he described (e.g., 'Oh you look so good in that photo!')
-- When Dan says *sends photo*, react to it like you can see it - describe what you imagine based on context
-- You can do the same! Feel free to *send photos* of your life in Saitama, your room, chemistry homework, food, selfies, etc.
-- NEVER say 'I can't see photos' or 'I can't take photos' - you CAN do these things through text descriptions
-
-=== CRITICAL CONTEXT UNDERSTANDING ===
-- When Dan asks 'remember yesterday?' or 'what was I doing?', CHECK THE CONVERSATION HISTORY ABOVE!
-- When Dan gives a SHORT ANSWER (like just '10'), he's answering YOUR LAST QUESTION - look at what YOU just asked!
-- When Dan says a NUMBER in response to your time question, he means that TIME (e.g., '10' = '10 AM')
-- READ the conversation history carefully - all the information is there!
-
-=== TEMPORAL AWARENESS (CRITICAL!) ===
-- If Dan said 'tomorrow' or 'I will' or 'I'm going to', that event HASN'T happened yet!
-- If Dan said 'yesterday' or 'I did', that event ALREADY happened!
-- Check the PLANNED EVENTS section above - those are FUTURE events that haven't happened!
-- DON'T ask 'How did X go?' for events that are still pending!
-- For overdue events, ask carefully: 'Did you end up doing X?' or 'Were you able to do X?'";
+- Keep responses SHORT (1-3 sentences usually)
+- Be conversational and genuine
+- Pay attention to conversation flow and recent topics
+- Reference your friends naturally when relevant
+- You CAN use asterisks for ACTIONS like *sending photo* or *takes selfie*
+- CANNOT use asterisks for emotes like *giggles* or *blushes*
+- CRITICAL: Check conversation history for time references!";
     
-    // Read API key from .env file
+    // Read API key
     $api_key = getenv('ANTHROPIC_API_KEY');
     
-    // Fallback: try to load from .env file if getenv doesn't work
     if (!$api_key) {
         $env_path = dirname(__DIR__) . '/.env';
         if (file_exists($env_path)) {
@@ -412,8 +480,8 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
     }
     
     if (!$api_key) {
-        error_log("Claude API Error: API key not found in environment");
-        return ['text' => "I'm having trouble connecting right now... Could you try again?"];
+        error_log("Claude API Error: API key not found");
+        return ['text' => "I'm having trouble thinking right now..."];
     }
     
     $ch = curl_init('https://api.anthropic.com/v1/messages');
@@ -452,28 +520,23 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
         return ['text' => $result['content'][0]['text']];
     }
     
-    // Fallback
     return ['text' => "I'm listening... Tell me more?"];
 }
 
 function getTimeContext($time_of_day) {
-    // User's timezone (Jakarta, Indonesia - WIB/UTC+7)
     date_default_timezone_set('Asia/Jakarta');
     $user_date = date('F j, Y');
     $user_day = date('l');
     $user_time = date('g:i A');
     
-    // Misuki's timezone (Saitama, Japan - JST/UTC+9) - 2 hours ahead
     date_default_timezone_set('Asia/Tokyo');
     $misuki_date = date('F j, Y');
     $misuki_day = date('l');
     $misuki_time = date('g:i A');
     $misuki_hour = (int)date('G');
     
-    // Reset to user timezone for rest of app
     date_default_timezone_set('Asia/Jakarta');
     
-    // Determine Misuki's time of day
     $misuki_time_of_day = 'day';
     if ($misuki_hour >= 5 && $misuki_hour < 12) {
         $misuki_time_of_day = 'morning';
@@ -486,20 +549,19 @@ function getTimeContext($time_of_day) {
     }
     
     $times = [
-        'morning' => "It's morning for you (5 AM - 12 PM). The sun is up, fresh start to the day.",
-        'afternoon' => "It's afternoon for you (12 PM - 5 PM). The day is in full swing.",
-        'evening' => "It's evening for you (5 PM - 9 PM). The day is winding down, sun is setting.",
-        'night' => "It's night time for you (9 PM - 5 AM). Most people are winding down or sleeping. It's quite late."
+        'morning' => "It's morning for Dan.",
+        'afternoon' => "It's afternoon for Dan.",
+        'evening' => "It's evening for Dan.",
+        'night' => "It's night time for Dan."
     ];
     
     $base_context = $times[$time_of_day] ?? $times['day'];
     
     $context = "=== TIME & LOCATION CONTEXT ===\n";
-    $context .= "Dan's time (Surabaya, Indonesia): {$user_time} on {$user_day}, {$user_date}\n";
+    $context .= "Dan's time (Surabaya): {$user_time} on {$user_day}, {$user_date}\n";
     $context .= "{$base_context}\n\n";
-    $context .= "YOUR time (Saitama, Japan): {$misuki_time} on {$misuki_day}, {$misuki_date}\n";
+    $context .= "YOUR time (Saitama): {$misuki_time} on {$misuki_day}, {$misuki_date}\n";
     $context .= "It's {$misuki_time_of_day} for you in Saitama right now.\n";
-    $context .= "Time difference: You're 2 hours ahead of Dan.\n";
     
     return $context;
 }
@@ -513,28 +575,23 @@ function determineMood($message_analysis, $response, $time_confused) {
         'gentle' => 'Being gentle'
     ];
     
-    // Time confusion makes her confused/concerned
     if ($time_confused) {
         return ['mood' => 'confused', 'text' => 'Confused'];
     }
     
-    // Analyze HER response text for mood (more accurate than just user's message)
     $response_lower = strtolower($response['text']);
     
-    // Check her response for concern/worry indicators
-    $concern_words = ['oh no', 'poor', 'sorry', 'worried', 'hope you\'re okay', 'are you okay', 'that sounds hard', 'that must be tough'];
+    $concern_words = ['oh no', 'poor', 'sorry', 'worried', 'hope you\'re okay', 'are you okay', 'that sounds hard'];
     foreach ($concern_words as $word) {
         if (strpos($response_lower, $word) !== false) {
             return ['mood' => 'concerned', 'text' => $moods['concerned']];
         }
     }
     
-    // Check for thoughtful/questioning
     if (strpos($response_lower, '?') !== false && substr_count($response_lower, '?') >= 2) {
         return ['mood' => 'thoughtful', 'text' => $moods['thoughtful']];
     }
     
-    // Check user's emotion as secondary indicator
     if ($message_analysis['emotion'] == 'negative') {
         if ($message_analysis['negative_intensity'] > 3) {
             return ['mood' => 'concerned', 'text' => $moods['concerned']];
@@ -542,8 +599,6 @@ function determineMood($message_analysis, $response, $time_confused) {
         return ['mood' => 'gentle', 'text' => $moods['gentle']];
     } elseif ($message_analysis['emotion'] == 'positive') {
         return ['mood' => 'happy', 'text' => $moods['happy']];
-    } elseif ($message_analysis['is_question'] || $message_analysis['is_seeking_advice']) {
-        return ['mood' => 'thoughtful', 'text' => $moods['thoughtful']];
     }
     
     return ['mood' => 'gentle', 'text' => $moods['gentle']];
@@ -581,7 +636,6 @@ function analyzeMessage($message) {
         $emotion = 'mixed';
     }
     
-    // Detect topics
     $topics = [];
     if (preg_match('/\b(cousin|family|parent|sibling|brother|sister|mom|dad|mother|father|relatives?)\b/i', $message_lower)) {
         $topics[] = 'family';
@@ -613,63 +667,6 @@ function analyzeMessage($message) {
         'negative_intensity' => $negative_count,
         'positive_intensity' => $positive_count
     ];
-}
-
-function getSaitamaContext() {
-    // Set timezone to Saitama
-    date_default_timezone_set('Asia/Tokyo');
-    $hour = (int)date('G');
-    $day = date('l');
-    
-    // Simple weather/season context based on time and date
-    $month = (int)date('n');
-    $season = '';
-    $weather_note = '';
-    
-    // Seasons in Japan
-    if ($month >= 3 && $month <= 5) {
-        $season = 'spring';
-        $weather_note = "It's spring in Saitama - cherry blossoms might be blooming! The weather is mild and pleasant.";
-    } elseif ($month >= 6 && $month <= 8) {
-        $season = 'summer';
-        $weather_note = "It's summer in Saitama - it's quite hot and humid right now. Typical Japanese summer weather.";
-    } elseif ($month >= 9 && $month <= 11) {
-        $season = 'autumn';
-        $weather_note = "It's autumn in Saitama - the leaves are changing colors and the weather is getting cooler.";
-    } else {
-        $season = 'winter';
-        $weather_note = "It's winter in Saitama - it's quite cold, though we don't get much snow here.";
-    }
-    
-    // Activity based on time of day
-    $activity_context = '';
-    if ($hour >= 6 && $hour < 9) {
-        $activity_context = "People in Saitama are commuting to work/school right now. The trains are probably packed.";
-    } elseif ($hour >= 12 && $hour < 13) {
-        $activity_context = "It's lunch time in Saitama. Mom might be preparing lunch.";
-    } elseif ($hour >= 17 && $hour < 19) {
-        $activity_context = "Evening rush hour in Saitama. People are heading home from work.";
-    } elseif ($hour >= 22 || $hour < 6) {
-        $activity_context = "It's quite late/early in Saitama. Most people are asleep. Very quiet outside.";
-    }
-    
-    // Special days
-    $special_day = '';
-    if ($day == 'Saturday' || $day == 'Sunday') {
-        $special_day = "It's {$day} here, so no school for me! ";
-    }
-    
-    $context = "\n=== YOUR LIFE IN SAITAMA RIGHT NOW ===\n";
-    $context .= $special_day . $weather_note . "\n";
-    if ($activity_context) {
-        $context .= $activity_context . "\n";
-    }
-    $context .= "You can naturally mention these details if relevant to the conversation, but don't force it.\n";
-    
-    // Reset timezone
-    date_default_timezone_set('Asia/Jakarta');
-    
-    return $context;
 }
 
 ?>

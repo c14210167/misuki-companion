@@ -973,67 +973,6 @@ function triggerBlur() {
 }
 
 function typeMessage(bubbleId, text, emotion = 'neutral') {
-        if (tremorEmotions.includes(emotion)) {
-            bubble.classList.add('tremor');
-        } else {
-            bubble.classList.remove('tremor');
-        }
-    }
-    
-function typeNextCharacter() {
-        if (characterIndex >= fullText.length) {
-            bubble.classList.remove('tremor'); // Remove tremor at end
-            return;
-        }
-        
-        // Find current emotion based on character position
-        let currentEmotion = 'neutral';
-        let charCount = 0;
-        
-        for (let i = 0; i < emotion_timeline.length; i++) {
-            const sentenceLength = emotion_timeline[i].sentence.length;
-            if (characterIndex >= charCount && characterIndex < charCount + sentenceLength) {
-                currentEmotion = emotion_timeline[i].emotion;
-                break;
-            }
-            charCount += sentenceLength + 1; // +1 for space between sentences
-        }
-        
-        // Only update emotion if it actually changed
-        if (currentEmotion !== lastEmotionSet) {
-            updateMisukiMood(currentEmotion, getEmotionText(currentEmotion));
-            lastEmotionSet = currentEmotion;
-        }
-        addTremorEffect(currentEmotion);
-        
-        // Add character
-        const char = fullText[characterIndex];
-        bubble.textContent += char;
-        chatMessages.scrollTop = chatMessages.scrollHeight;
-        
-        // Play beep sound for letters and numbers only (not punctuation or spaces)
-        if (/[a-zA-Z0-9]/.test(char)) {
-            // Clone and play to allow rapid successive beeps
-            const beep = beepSound.cloneNode();
-            beep.volume = 0.3;
-            beep.play().catch(e => {
-                // Silently fail if audio can't play (user hasn't interacted yet)
-            });
-        }
-        
-        characterIndex++;
-        
-        // Check for pause
-        const pauseTime = shouldPause(char, fullText[characterIndex]);
-        const typingSpeed = getTypingSpeed(currentEmotion);
-        
-        setTimeout(typeNextCharacter, typingSpeed + pauseTime);
-    }
-    
-    typeNextCharacter();
-
-
-function typeMessage(bubbleId, text, emotion = 'neutral') {
     // Fallback typing without emotion timeline
     const bubble = document.getElementById(bubbleId);
     if (!bubble) return;
