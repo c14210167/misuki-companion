@@ -12,9 +12,9 @@ function detectFutureEvent($message) {
         'planned_time' => null
     ];
     
-    // ===== PRIORITY 1: "at [time]" patterns (NEW - HIGHEST PRIORITY) =====
+    // ===== PRIORITY 1: "at [time]" patterns (HIGHEST PRIORITY) =====
     
-    // Pattern: "pick up [someone] at [time]"
+    // Pattern 1: "pick up [someone] at [time]"
     if (preg_match('/pick(?:ing)?\s+up\s+(.+?)\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i', $message_lower, $matches)) {
         $who = trim($matches[1]);
         $hour = (int)$matches[2];
@@ -22,21 +22,41 @@ function detectFutureEvent($message) {
         $meridiem = isset($matches[4]) && $matches[4] !== '' ? strtolower($matches[4]) : '';
         
         // Convert to 24-hour
+        $current_hour = (int)date('G');
+        
         if ($meridiem === 'pm' && $hour < 12) {
             $hour += 12;
         } elseif ($meridiem === 'am' && $hour === 12) {
             $hour = 0;
+        } elseif ($meridiem === '' && $hour === 12) {
+            // Special case: "at 12" with no AM/PM
+            // If it's currently past noon, assume they mean noon tomorrow
+            if ($current_hour >= 12) {
+                // Keep hour = 12, but flag for tomorrow
+                $is_tomorrow = true;
+            }
+            // If it's morning, assume noon today
         } elseif ($meridiem === '' && $hour < 12) {
-            $current_hour = (int)date('G');
+            // For hours 1-11 without AM/PM
             if ($hour <= $current_hour) {
                 $hour += 12; // Assume PM if time already passed
             }
         }
         
-        $current_hour = (int)date('G');
         $current_minute = (int)date('i');
         $current_time_minutes = ($current_hour * 60) + $current_minute;
         $event_time_minutes = ($hour * 60) + $minute;
+        
+        // Handle "tomorrow" scenario for "at 12" after noon
+        if (isset($is_tomorrow) && $is_tomorrow) {
+            $result['has_future_event'] = true;
+            $result['event_description'] = "picking up $who";
+            $result['time_frame'] = 'tomorrow';
+            $result['planned_date'] = date('Y-m-d', strtotime('+1 day'));
+            $result['planned_time'] = '12:00:00'; // Noon tomorrow
+            error_log("✅ Detected: picking up $who at noon tomorrow");
+            return $result;
+        }
         
         if ($event_time_minutes > $current_time_minutes) {
             $result['has_future_event'] = true;
@@ -49,63 +69,43 @@ function detectFutureEvent($message) {
         }
     }
     
-    // Pattern: "going to/gonna [action] at [time]"
-    if (preg_match('/(?:going to|gonna|will)\s+(.+?)\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i', $message_lower, $matches)) {
-        $action = trim($matches[1]);
-        $hour = (int)$matches[2];
-        $minute = isset($matches[3]) && $matches[3] !== '' ? (int)$matches[3] : 0;
-        $meridiem = isset($matches[4]) && $matches[4] !== '' ? strtolower($matches[4]) : '';
-        
-        // Convert to 24-hour
-        if ($meridiem === 'pm' && $hour < 12) {
-            $hour += 12;
-        } elseif ($meridiem === 'am' && $hour === 12) {
-            $hour = 0;
-        } elseif ($meridiem === '' && $hour < 12) {
-            $current_hour = (int)date('G');
-            if ($hour <= $current_hour) {
-                $hour += 12;
-            }
-        }
-        
-        $current_hour = (int)date('G');
-        $current_minute = (int)date('i');
-        $current_time_minutes = ($current_hour * 60) + $current_minute;
-        $event_time_minutes = ($hour * 60) + $minute;
-        
-        if ($event_time_minutes > $current_time_minutes) {
-            $result['has_future_event'] = true;
-            $result['event_description'] = $action;
-            $result['time_frame'] = 'today';
-            $result['planned_date'] = date('Y-m-d');
-            $result['planned_time'] = sprintf('%02d:%02d:00', $hour, $minute);
-            error_log("✅ Detected: $action at $hour:$minute");
-            return $result;
-        }
-    }
-    
-    // Pattern: "meeting [someone] at [time]"
+    // Pattern 2: "meeting [someone] at [time]"
     if (preg_match('/meet(?:ing)?\s+(.+?)\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i', $message_lower, $matches)) {
         $who = trim($matches[1]);
         $hour = (int)$matches[2];
         $minute = isset($matches[3]) && $matches[3] !== '' ? (int)$matches[3] : 0;
         $meridiem = isset($matches[4]) && $matches[4] !== '' ? strtolower($matches[4]) : '';
         
+        // Convert to 24-hour
+        $current_hour = (int)date('G');
+        
         if ($meridiem === 'pm' && $hour < 12) {
             $hour += 12;
         } elseif ($meridiem === 'am' && $hour === 12) {
             $hour = 0;
+        } elseif ($meridiem === '' && $hour === 12) {
+            if ($current_hour >= 12) {
+                $is_tomorrow = true;
+            }
         } elseif ($meridiem === '' && $hour < 12) {
-            $current_hour = (int)date('G');
             if ($hour <= $current_hour) {
                 $hour += 12;
             }
         }
         
-        $current_hour = (int)date('G');
         $current_minute = (int)date('i');
         $current_time_minutes = ($current_hour * 60) + $current_minute;
         $event_time_minutes = ($hour * 60) + $minute;
+        
+        if (isset($is_tomorrow) && $is_tomorrow) {
+            $result['has_future_event'] = true;
+            $result['event_description'] = "meeting $who";
+            $result['time_frame'] = 'tomorrow';
+            $result['planned_date'] = date('Y-m-d', strtotime('+1 day'));
+            $result['planned_time'] = '12:00:00';
+            error_log("✅ Detected: meeting $who at noon tomorrow");
+            return $result;
+        }
         
         if ($event_time_minutes > $current_time_minutes) {
             $result['has_future_event'] = true;
@@ -118,8 +118,121 @@ function detectFutureEvent($message) {
         }
     }
     
+    // Pattern 3: "going to/gonna [action] at [time]"
+    if (preg_match('/(?:going to|gonna|will)\s+(.+?)\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i', $message_lower, $matches)) {
+        $action = trim($matches[1]);
+        $hour = (int)$matches[2];
+        $minute = isset($matches[3]) && $matches[3] !== '' ? (int)$matches[3] : 0;
+        $meridiem = isset($matches[4]) && $matches[4] !== '' ? strtolower($matches[4]) : '';
+        
+        // Convert to 24-hour
+        $current_hour = (int)date('G');
+        
+        if ($meridiem === 'pm' && $hour < 12) {
+            $hour += 12;
+        } elseif ($meridiem === 'am' && $hour === 12) {
+            $hour = 0;
+        } elseif ($meridiem === '' && $hour === 12) {
+            if ($current_hour >= 12) {
+                $is_tomorrow = true;
+            }
+        } elseif ($meridiem === '' && $hour < 12) {
+            if ($hour <= $current_hour) {
+                $hour += 12;
+            }
+        }
+        
+        $current_minute = (int)date('i');
+        $current_time_minutes = ($current_hour * 60) + $current_minute;
+        $event_time_minutes = ($hour * 60) + $minute;
+        
+        if (isset($is_tomorrow) && $is_tomorrow) {
+            $result['has_future_event'] = true;
+            $result['event_description'] = $action;
+            $result['time_frame'] = 'tomorrow';
+            $result['planned_date'] = date('Y-m-d', strtotime('+1 day'));
+            $result['planned_time'] = '12:00:00';
+            error_log("✅ Detected: $action at noon tomorrow");
+            return $result;
+        }
+        
+        if ($event_time_minutes > $current_time_minutes) {
+            $result['has_future_event'] = true;
+            $result['event_description'] = $action;
+            $result['time_frame'] = 'today';
+            $result['planned_date'] = date('Y-m-d');
+            $result['planned_time'] = sprintf('%02d:%02d:00', $hour, $minute);
+            error_log("✅ Detected: $action at $hour:$minute");
+            return $result;
+        }
+    }
+    
+    // Pattern 4: "[action] at [time]" (catch-all for "watch movie at 12")
+    if (preg_match('/(.+?)\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:\s+|$)/i', $message_lower, $matches)) {
+        $action = trim($matches[1]);
+        
+        // Filter out non-action phrases
+        $skip_phrases = ['looking', 'staring', 'arrived', 'was', 'were', 'am', 'is', 'are'];
+        $skip = false;
+        foreach ($skip_phrases as $phrase) {
+            if (strpos($action, $phrase) !== false) {
+                $skip = true;
+                break;
+            }
+        }
+        
+        if (!$skip) {
+            $hour = (int)$matches[2];
+            $minute = isset($matches[3]) && $matches[3] !== '' ? (int)$matches[3] : 0;
+            $meridiem = isset($matches[4]) && $matches[4] !== '' ? strtolower($matches[4]) : '';
+            
+            // Convert to 24-hour
+            $current_hour = (int)date('G');
+            
+            if ($meridiem === 'pm' && $hour < 12) {
+                $hour += 12;
+            } elseif ($meridiem === 'am' && $hour === 12) {
+                $hour = 0;
+            } elseif ($meridiem === '' && $hour === 12) {
+                if ($current_hour >= 12) {
+                    $is_tomorrow = true;
+                }
+            } elseif ($meridiem === '' && $hour < 12) {
+                if ($hour <= $current_hour) {
+                    $hour += 12;
+                }
+            }
+            
+            $current_minute = (int)date('i');
+            $current_time_minutes = ($current_hour * 60) + $current_minute;
+            $event_time_minutes = ($hour * 60) + $minute;
+            
+            if (isset($is_tomorrow) && $is_tomorrow) {
+                $result['has_future_event'] = true;
+                $result['event_description'] = $action;
+                $result['time_frame'] = 'tomorrow';
+                $result['planned_date'] = date('Y-m-d', strtotime('+1 day'));
+                $result['planned_time'] = '12:00:00';
+                error_log("✅ Detected: $action at noon tomorrow");
+                return $result;
+            }
+            
+            if ($event_time_minutes > $current_time_minutes) {
+                $result['has_future_event'] = true;
+                $result['event_description'] = $action;
+                $result['time_frame'] = 'today';
+                $result['planned_date'] = date('Y-m-d');
+                $result['planned_time'] = sprintf('%02d:%02d:00', $hour, $minute);
+                error_log("✅ Detected: $action at $hour:$minute");
+                return $result;
+            }
+        }
+    }
+    
     // ===== PRIORITY 2: "tomorrow" patterns =====
-    if (preg_match('/(?:i\'m|im|i am|gonna|going to|will|planning to)\s+(.+?)\s+tomorrow/i', $message_lower, $matches)) {
+    
+    // Pattern: "tomorrow i'll/i will [action]"
+    if (preg_match('/tomorrow\s+(?:i\'ll|i will|i\'m|im|i am|gonna|going to)\s+(.+?)(?:\.|!|\?|$)/i', $message_lower, $matches)) {
         $result['has_future_event'] = true;
         $result['event_description'] = trim($matches[1]);
         $result['time_frame'] = 'tomorrow';
@@ -128,7 +241,8 @@ function detectFutureEvent($message) {
         return $result;
     }
     
-    if (preg_match('/tomorrow\s+(?:i\'m|im|i am|gonna|going to|will)\s+(.+?)(?:\.|!|\?|$)/i', $message_lower, $matches)) {
+    // Pattern: "i'll/gonna [action] tomorrow"
+    if (preg_match('/(?:i\'ll|i will|i\'m|im|i am|gonna|going to)\s+(.+?)\s+tomorrow/i', $message_lower, $matches)) {
         $result['has_future_event'] = true;
         $result['event_description'] = trim($matches[1]);
         $result['time_frame'] = 'tomorrow';
