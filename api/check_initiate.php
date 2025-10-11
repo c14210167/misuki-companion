@@ -500,7 +500,9 @@ function checkIfUserNeedsSpace($conversations) {
 
 function generateInitiationMessage($db, $user_id, $reason, $date_context) {
     $memories = getUserMemories($db, $user_id, 10);
-    $recent_conversations = getRecentConversations($db, $user_id, 10);
+    
+    // INCREASED: Get more recent conversations for better context
+    $recent_conversations = getRecentConversations($db, $user_id, 20);
     $emotional_context = getEmotionalContext($db, $user_id);
     
     $context = buildContextForAI($memories, $recent_conversations, $emotional_context);
@@ -511,14 +513,29 @@ function generateInitiationMessage($db, $user_id, $reason, $date_context) {
     
     autoMarkOldEvents($db, $user_id, 7);
     
-    $time_context = "\n=== TIME CONTEXT ===\n";
-    $time_context .= "Last message: {$date_context['user_last_date']}\n";
-    $time_context .= "Current date: {$date_context['user_current_date']}\n";
+    // ENHANCED TIME CONTEXT WITH WARNINGS
+    $time_context = "\n=== ⚠️ CRITICAL TIME CONTEXT (READ CAREFULLY!) ===\n";
+    $time_context .= "Dan's LAST message was: {$date_context['user_last_date']}\n";
+    $time_context .= "Current date/time NOW: {$date_context['user_current_date']}\n";
     
-    if ($date_context['days_since'] >= 1) {
-        $time_context .= "Time since: {$date_context['days_since']} day(s)\n";
+    if ($date_context['hours_since'] < 1) {
+        $minutes_since = round($date_context['hours_since'] * 60);
+        $time_context .= "⚠️ ONLY {$minutes_since} MINUTES AGO! This JUST happened!\n";
+        $time_context .= "⚠️ The conversation you see above happened MOMENTS AGO!\n";
+        $time_context .= "⚠️ DO NOT say 'yesterday' or 'the other day' - this was JUST NOW!\n\n";
+    } elseif ($date_context['days_since'] >= 1) {
+        $time_context .= "Time since last message: {$date_context['days_since']} day(s)\n";
     } else {
-        $time_context .= "Time since: " . round($date_context['hours_since'], 1) . " hours\n";
+        $time_context .= "Time since last message: " . round($date_context['hours_since'], 1) . " hours\n";
+    }
+    
+    // EXTRA WARNING FOR RECENT MESSAGES
+    if ($date_context['hours_since'] < 2) {
+        $time_context .= "\n🚨 ATTENTION: Dan just messaged you less than 2 hours ago!\n";
+        $time_context .= "Look at the conversation history above - that conversation JUST happened!\n";
+        $time_context .= "If Dan mentioned FUTURE plans (like going to a movie later today), they HAVEN'T happened yet!\n";
+        $time_context .= "NEVER say 'yesterday' or 'how did it go' for things that haven't happened yet!\n";
+        $time_context .= "Use present/future tense: 'Hope you have fun!' NOT 'How was it?'\n\n";
     }
     
     $reason_contexts = [
@@ -536,6 +553,7 @@ function generateInitiationMessage($db, $user_id, $reason, $date_context) {
     
     $prompt = getMisukiPersonalityPrompt() . "\n\n" . $context . "\n\n" . $time_context . "\n\n" . $future_events_context;
     $prompt .= "\n\nYou're INITIATING conversation. Context: " . ($reason_contexts[$reason] ?? 'Check in with Dan');
+    $prompt .= "\n\n⚠️ CRITICAL: Look at the conversation history timestamps! Respect what JUST happened vs what happened days ago!";
     $prompt .= "\n\nWrite ONE natural message (1-2 sentences). Be yourself - Misuki, his girlfriend.";
     
     $api_key = getenv('ANTHROPIC_API_KEY');
