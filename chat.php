@@ -109,7 +109,6 @@
                     id="fileInput" 
                     accept=".txt,.pdf,.doc,.docx,.md"
                     style="display: none;"
-                    onchange="handleFileSelect(event)"
                 >
                 <button class="attach-button" onclick="document.getElementById('fileInput').click()" title="Attach file">
                     📎
@@ -118,13 +117,13 @@
                     id="messageInput" 
                     placeholder="Type your message..."
                     rows="1"
-                    onkeydown="handleKeyPress(event)"
                 ></textarea>
                 <button onclick="sendMessage()">SEND</button>
             </div>
         </div>
     </div>
 
-    <script src="assets/js/chat.js"></script>
+    <!-- Load as ES6 module -->
+    <script type="module" src="assets/js/chat.js"></script>
 </body>
 </html>
