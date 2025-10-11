@@ -1,6 +1,7 @@
 <?php
 // OPTIMIZED: Batch AI-Powered Emotion Detection
 // Analyzes ALL sentences in ONE API call instead of multiple calls
+// ANTI-FLICKER: Removes emotions that are too short to display properly
 
 function parseEmotionsInMessage($message) {
     // Split message into sentences
