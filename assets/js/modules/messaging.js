@@ -142,15 +142,22 @@ export async function sendMessage() {
 
         const data = await response.json();
         
-        setTimeout(() => {
-            typingIndicator.classList.remove('active');
-            addMessage('misuki', data.response, data.emotion_timeline);
-            updateMisukiMood(data.mood, data.mood_text);
-            
-            if (data.should_follow_up) {
-                scheduleFollowUp(0);
-            }
-        }, 1000 + Math.random() * 1500);
+        // Check if message is split
+        if (data.is_split && data.additional_messages) {
+            // She's sending multiple messages!
+            handleSplitMessages(data);
+        } else {
+            // Normal single message
+            setTimeout(() => {
+                typingIndicator.classList.remove('active');
+                addMessage('misuki', data.response, data.emotion_timeline);
+                updateMisukiMood(data.mood, data.mood_text);
+                
+                if (data.should_follow_up) {
+                    scheduleFollowUp(0);
+                }
+            }, 1000 + Math.random() * 1500);
+        }
 
     } catch (error) {
         console.error('Error:', error);
@@ -158,6 +165,66 @@ export async function sendMessage() {
         addMessage('misuki', "Oh no... I'm having trouble thinking right now. Could you try again? 💭");
         updateMisukiMood('concerned', 'Worried');
     }
+}
+
+// Handle split messages with realistic timing
+function handleSplitMessages(data) {
+    const allMessages = [data.response, ...data.additional_messages];
+    const emotionTimelines = data.emotion_timelines || [];
+    
+    let currentIndex = 0;
+    
+    function sendNextPart() {
+        if (currentIndex >= allMessages.length) {
+            // All messages sent
+            typingIndicator.classList.remove('active');
+            
+            // Check for follow-up after all messages are done
+            if (data.should_follow_up) {
+                scheduleFollowUp(0);
+            }
+            return;
+        }
+        
+        const currentMessage = allMessages[currentIndex];
+        const currentEmotions = emotionTimelines[currentIndex] || null;
+        
+        // Show typing indicator
+        typingIndicator.classList.add('active');
+        
+        // Calculate realistic delay based on message length
+        const wordCount = currentMessage.split(' ').length;
+        const baseDelay = 800; // Base delay between messages
+        const typingDelay = wordCount * 150; // ~150ms per word "typing time"
+        const randomVariation = Math.random() * 500; // 0-500ms variation
+        
+        const totalDelay = baseDelay + typingDelay + randomVariation;
+        
+        setTimeout(() => {
+            typingIndicator.classList.remove('active');
+            addMessage('misuki', currentMessage, currentEmotions);
+            
+            // Update mood based on first message
+            if (currentIndex === 0) {
+                updateMisukiMood(data.mood, data.mood_text);
+            }
+            
+            currentIndex++;
+            
+            // Schedule next message with a brief pause
+            if (currentIndex < allMessages.length) {
+                // Brief pause before next message (feels like she's continuing to type)
+                const pauseBetweenMessages = 400 + Math.random() * 600; // 400-1000ms
+                setTimeout(sendNextPart, pauseBetweenMessages);
+            } else {
+                // Done with all messages
+                typingIndicator.classList.remove('active');
+            }
+        }, totalDelay);
+    }
+    
+    // Start sending messages
+    sendNextPart();
 }
 
 // Add date separator
@@ -188,7 +255,7 @@ export function addMessage(sender, text, emotion_timeline = null) {
     messageDiv.style.opacity = '0';
     messageDiv.style.transform = sender === 'user' ? 'translateX(50px)' : 'translateX(-50px)';
     
-    const bubbleId = 'bubble-' + Date.now();
+    const bubbleId = 'bubble-' + Date.now() + '-' + Math.random();
     const timeStr = now.toLocaleTimeString('en-US', { 
         hour: 'numeric', 
         minute: '2-digit',
