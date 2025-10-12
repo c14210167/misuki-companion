@@ -95,17 +95,23 @@ function detectTimeConfusion(message, timeOfDay) {
 function calculateTypingDuration(text, emotionTimeline) {
     // Base calculation: character count × average typing speed
     const charCount = text.length;
-    const avgSpeed = 50; // Average ms per character
+    const avgSpeed = 60; // Increased from 50ms to 60ms per character
     
     // Add pause times for punctuation
-    const punctuationPauses = (text.match(/[.!?]/g) || []).length * 400;
-    const commaPauses = (text.match(/[,;]/g) || []).length * 200;
+    const punctuationPauses = (text.match(/[.!?]/g) || []).length * 500; // Increased from 400
+    const commaPauses = (text.match(/[,;]/g) || []).length * 250; // Increased from 200
+    
+    // If there's an emotion timeline, add time for emotion transitions
+    let emotionPauses = 0;
+    if (emotionTimeline && emotionTimeline.length > 1) {
+        emotionPauses = (emotionTimeline.length - 1) * 300; // 300ms per emotion change
+    }
     
     // Total duration
-    const baseDuration = (charCount * avgSpeed) + punctuationPauses + commaPauses;
+    const baseDuration = (charCount * avgSpeed) + punctuationPauses + commaPauses + emotionPauses;
     
-    // Add a small buffer for safety
-    return baseDuration + 500;
+    // Add a larger buffer for safety
+    return baseDuration + 1000; // Increased from 500ms to 1000ms
 }
 
 // Send message
