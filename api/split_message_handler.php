@@ -112,9 +112,16 @@ function buildSplitDecisionPrompt($message, $mood, $analysis, $style) {
 function parseSplitDecision($response_text) {
     $response_text = trim(strtoupper($response_text));
     
-    if (preg_match('/SPLIT:\s*(\d+)/i', $response_text, $matches)) {
-        $num = (int)$matches[1];
-        $num = max(2, min(4, $num));
+    // Match "SPLIT: [2-4]" or "SPLIT: 3" or just "SPLIT"
+    if (preg_match('/SPLIT/i', $response_text)) {
+        // Look for a specific number if provided
+        if (preg_match('/SPLIT:\s*\[?(\d+)(?:-\d+)?\]?/i', $response_text, $matches)) {
+            $num = (int)$matches[1];
+            $num = max(2, min(4, $num)); // Clamp between 2-4
+        } else {
+            // Default to 3 if just "SPLIT" with no number
+            $num = 3;
+        }
         
         return [
             'should_split' => true,
@@ -122,6 +129,7 @@ function parseSplitDecision($response_text) {
         ];
     }
     
+    // If it says SINGLE or anything else, don't split
     return ['should_split' => false, 'num_parts' => 1];
 }
 

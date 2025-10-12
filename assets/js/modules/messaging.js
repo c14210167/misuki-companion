@@ -91,6 +91,23 @@ function detectTimeConfusion(message, timeOfDay) {
     return false;
 }
 
+// Calculate typing duration for a message
+function calculateTypingDuration(text, emotionTimeline) {
+    // Base calculation: character count × average typing speed
+    const charCount = text.length;
+    const avgSpeed = 50; // Average ms per character
+    
+    // Add pause times for punctuation
+    const punctuationPauses = (text.match(/[.!?]/g) || []).length * 400;
+    const commaPauses = (text.match(/[,;]/g) || []).length * 200;
+    
+    // Total duration
+    const baseDuration = (charCount * avgSpeed) + punctuationPauses + commaPauses;
+    
+    // Add a small buffer for safety
+    return baseDuration + 500;
+}
+
 // Send message
 export async function sendMessage() {
     const message = messageInput.value.trim();
@@ -192,15 +209,12 @@ function handleSplitMessages(data) {
         // Show typing indicator
         typingIndicator.classList.add('active');
         
-        // Calculate realistic delay based on message length
+        // Calculate how long the typing indicator should show
         const wordCount = currentMessage.split(' ').length;
-        const baseDelay = 800; // Base delay between messages
-        const typingDelay = wordCount * 150; // ~150ms per word "typing time"
-        const randomVariation = Math.random() * 500; // 0-500ms variation
-        
-        const totalDelay = baseDelay + typingDelay + randomVariation;
+        const typingIndicatorDelay = 800 + (wordCount * 150) + (Math.random() * 500);
         
         setTimeout(() => {
+            // Hide typing indicator and add message
             typingIndicator.classList.remove('active');
             addMessage('misuki', currentMessage, currentEmotions);
             
@@ -209,18 +223,18 @@ function handleSplitMessages(data) {
                 updateMisukiMood(data.mood, data.mood_text);
             }
             
+            // Calculate how long THIS message will take to type out
+            const messageTypingDuration = calculateTypingDuration(currentMessage, currentEmotions);
+            
             currentIndex++;
             
-            // Schedule next message with a brief pause
+            // Schedule next message AFTER this one finishes typing
             if (currentIndex < allMessages.length) {
-                // Brief pause before next message (feels like she's continuing to type)
-                const pauseBetweenMessages = 400 + Math.random() * 600; // 400-1000ms
-                setTimeout(sendNextPart, pauseBetweenMessages);
-            } else {
-                // Done with all messages
-                typingIndicator.classList.remove('active');
+                // Wait for current message to finish typing + a brief natural pause
+                const pauseBeforeNext = messageTypingDuration + 600 + (Math.random() * 400);
+                setTimeout(sendNextPart, pauseBeforeNext);
             }
-        }, totalDelay);
+        }, typingIndicatorDelay);
     }
     
     // Start sending messages

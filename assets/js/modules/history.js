@@ -70,8 +70,23 @@ export async function loadChatHistory() {
                     window.lastMessageDate = dateStr; // Update global tracker
                 }
                 
+                // Add user message
                 addMessageInstant('user', conv.user_message, conv.timestamp);
-                addMessageInstant('misuki', conv.misuki_response, conv.timestamp);
+                
+                // Check if Misuki's response contains [SPLIT] marker
+                if (conv.misuki_response.includes('[SPLIT]')) {
+                    // Split message was saved - break it apart
+                    const splitMessages = conv.misuki_response.split('\n[SPLIT]\n');
+                    console.log(`💬 Found split message with ${splitMessages.length} parts`);
+                    
+                    // Add each part as a separate message
+                    splitMessages.forEach((messagePart, partIndex) => {
+                        addMessageInstant('misuki', messagePart.trim(), conv.timestamp);
+                    });
+                } else {
+                    // Normal single message
+                    addMessageInstant('misuki', conv.misuki_response, conv.timestamp);
+                }
             });
             
             // Scroll to bottom - force it multiple times to ensure it works
