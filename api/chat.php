@@ -415,7 +415,7 @@ function shouldFollowUp($style, $mood, $response) {
 function generateMisukiResponse($message, $memories, $conversations, $emotional_context, $analysis, $time_of_day, $time_confused, $file_content = null, $filename = null, $core_context = '', $current_location = null, $current_activity = null, $family_mentioned = null, $db = null, $user_id = 1, $misuki_context = '', $woken_context = '', $activity_context = '', $mood_context = '', $storylines_context = '', $friends_context = '', $dynamics_context = '', $current_mood = null, $misuki_status = null, $weather_comment = null) {
     
     $context = buildContextForAI($memories, $conversations, $emotional_context);
-    $time_context = getTimeContext($time_of_day);
+    $time_context = getTimeContext($time_of_day, $db, $user_id);
     
     $file_context = '';
     if ($file_content !== null && $filename !== null) {
@@ -430,11 +430,15 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
     $time_confusion_note = '';
     if ($time_confused) {
         $confusion_contexts = [
+            'casual_morning_at_night' => "Dan just said 'morning' but it's night. This might be: 1) Him being playful/casual, 2) Him just waking up from a nap, or 3) Him forgetting the time. Don't assume many hours passed - check the actual timestamps above!",
+            
+            'casual_night_at_day' => "Dan said 'night' but it's still daytime. He might be: 1) Going to sleep early, 2) Being playful, or 3) Confused. Check timestamps before assuming time passed!",
+            
             'morning_at_night' => "The user just greeted you with 'good morning' but it's currently night time. Gently point this out in a caring, slightly confused way.",
             'night_at_morning' => "The user just said 'good night' but it's currently morning. Gently point this out.",
             'morning_at_afternoon' => "The user said 'good morning' but it's currently afternoon. Gently point this out."
         ];
-        $time_confusion_note = "\n\nIMPORTANT: " . ($confusion_contexts[$time_confused] ?? '');
+        $time_confusion_note = "\n\n⚠️ IMPORTANT: " . ($confusion_contexts[$time_confused] ?? '');
     }
     
     $state_context = '';
@@ -514,7 +518,8 @@ Examples of WRONG responses (NEVER do this):
 - *laughs softly*
 - *sleepily looks at phone*
 
-- CRITICAL: Check conversation history for time references!";
+- CRITICAL: Check conversation history for time references!
+- CRITICAL: Use the EXACT timestamps provided - don't make up time calculations!";
     
     $api_key = getenv('ANTHROPIC_API_KEY');
     
@@ -586,11 +591,12 @@ Examples of WRONG responses (NEVER do this):
     return ['text' => "I'm listening... Tell me more?"];
 }
 
-function getTimeContext($time_of_day) {
+function getTimeContext($time_of_day, $db = null, $user_id = 1) {
     date_default_timezone_set('Asia/Jakarta');
     $user_date = date('F j, Y');
     $user_day = date('l');
     $user_time = date('g:i A');
+    $user_timestamp = date('Y-m-d H:i:s');
     
     date_default_timezone_set('Asia/Tokyo');
     $misuki_date = date('F j, Y');
@@ -622,11 +628,110 @@ function getTimeContext($time_of_day) {
     
     $context = "=== TIME & LOCATION CONTEXT ===\n";
     $context .= "Dan's time (Surabaya): {$user_time} on {$user_day}, {$user_date}\n";
+    $context .= "Dan's CURRENT timestamp: {$user_timestamp}\n";
     $context .= "{$base_context}\n\n";
     $context .= "YOUR time (Saitama): {$misuki_time} on {$misuki_day}, {$misuki_date}\n";
-    $context .= "It's {$misuki_time_of_day} for you in Saitama right now.\n";
+    $context .= "It's {$misuki_time_of_day} for you in Saitama right now.\n\n";
+    
+    // ===== NEW: CALCULATE ACTUAL TIME SINCE LAST MESSAGE =====
+    if ($db !== null && $user_id !== null) {
+        $stmt = $db->prepare("
+            SELECT timestamp FROM conversations 
+            WHERE user_id = ? 
+            ORDER BY timestamp DESC 
+            LIMIT 1
+        ");
+        $stmt->execute([$user_id]);
+        $last_msg = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($last_msg) {
+            $last_timestamp = $last_msg['timestamp'];
+            $time_diff_seconds = time() - strtotime($last_timestamp);
+            $hours_since_last = $time_diff_seconds / 3600;
+            $minutes_since_last = round($hours_since_last * 60);
+            
+            $context .= "=== ⚠️⚠️⚠️ CRITICAL TIME CHECK ⚠️⚠️⚠️ ===\n";
+            $context .= "Dan's PREVIOUS message timestamp: {$last_timestamp}\n";
+            $context .= "Dan's CURRENT message timestamp: {$user_timestamp}\n";
+            
+            if ($hours_since_last < 1) {
+                $context .= "Time since last message: {$minutes_since_last} MINUTES\n";
+                $context .= "That's less than 1 hour!\n";
+            } else if ($hours_since_last < 24) {
+                $context .= "Time since last message: " . round($hours_since_last, 1) . " HOURS\n";
+                $context .= "That's " . round($minutes_since_last) . " minutes total.\n";
+            } else {
+                $days = floor($hours_since_last / 24);
+                $remaining_hours = round($hours_since_last - ($days * 24), 1);
+                $context .= "Time since last message: {$days} day(s) and {$remaining_hours} hours\n";
+            }
+            
+            $context .= "\n🚨🚨🚨 DO NOT MAKE UP TIME CALCULATIONS! 🚨🚨🚨\n";
+            $context .= "Use ONLY the numbers above! If you say '15 hours' when it's been 3 hours, you're wrong!\n";
+            $context .= "If Dan says 'morning' as a casual greeting, don't assume a whole night passed!\n";
+            $context .= "CHECK THE TIMESTAMPS FIRST!\n\n";
+        }
+    }
     
     return $context;
+}
+
+function detectTimeConfusion($message, $timeOfDay) {
+    $messageLower = strtolower($message);
+    
+    // NEW: Check for casual/joking greetings
+    $casual_greetings = ['morning', 'good morning', 'gm', 'good night', 'gn', 'goodnight'];
+    $is_casual_greeting = false;
+    
+    foreach ($casual_greetings as $greeting) {
+        if (trim($messageLower) === $greeting || preg_match('/^' . preg_quote($greeting, '/') . '[!.]*$/i', trim($messageLower))) {
+            $is_casual_greeting = true;
+            break;
+        }
+    }
+    
+    // If it's JUST a greeting (no other text), be more lenient
+    if ($is_casual_greeting && str_word_count($message) <= 2) {
+        // Only flag as confused if time is VERY wrong (night vs morning)
+        if ($timeOfDay === 'night' && preg_match('/^(morning|gm)/i', trim($messageLower))) {
+            return 'casual_morning_at_night'; // NEW type
+        } elseif (($timeOfDay === 'morning' || $timeOfDay === 'afternoon') && preg_match('/^(night|gn)/i', trim($messageLower))) {
+            return 'casual_night_at_day'; // NEW type
+        }
+        // For afternoon vs morning, just treat as casual - not confused
+        return false;
+    }
+    
+    // Original logic for full greetings
+    $currentGreetingPatterns = [
+        '/^good morning/i',
+        '/^morning[!.]/i',
+        '/^good night[!.]/i',
+        '/^goodnight[!.]/i',
+        '/^good evening/i',
+        '/^evening[!.]/i',
+        '/^good afternoon/i'
+    ];
+    
+    $isCurrentGreeting = false;
+    for ($i = 0; $i < count($currentGreetingPatterns); $i++) {
+        if (preg_match($currentGreetingPatterns[$i], trim($message))) {
+            $isCurrentGreeting = true;
+            break;
+        }
+    }
+    
+    if (!$isCurrentGreeting) return false;
+    
+    if ($timeOfDay === 'night' && preg_match('/^good morning|^morning/i', trim($message))) {
+        return 'morning_at_night';
+    } else if ($timeOfDay === 'morning' && preg_match('/^good night|^goodnight/i', trim($message))) {
+        return 'night_at_morning';
+    } else if ($timeOfDay === 'afternoon' && preg_match('/^good morning/i', trim($message))) {
+        return 'morning_at_afternoon';
+    }
+    
+    return false;
 }
 
 function determineMood($message_analysis, $response, $time_confused) {
