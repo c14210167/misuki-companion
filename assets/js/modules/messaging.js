@@ -119,6 +119,11 @@ export async function sendMessage() {
     const message = messageInput.value.trim();
     if (!message && !window.attachedFile) return;
 
+    // 🆕 CANCEL ANY PENDING SPLIT MESSAGES
+    if (window.cancelSplitMessages) {
+        window.cancelSplitMessages();
+    }
+
     // Update last user message time
     window.lastUserMessageTime = Date.now();
     console.log('📤 User sent message at', new Date(window.lastUserMessageTime).toLocaleTimeString());
@@ -190,12 +195,13 @@ export async function sendMessage() {
     }
 }
 
-// Handle split messages with realistic timing
+// Handle split messages with realistic timing - NOW PAUSES WHEN USER IS TYPING
 function handleSplitMessages(data) {
     const allMessages = [data.response, ...data.additional_messages];
     const emotionTimelines = data.emotion_timelines || [];
     
     let currentIndex = 0;
+    let nextMessageTimeout = null;
     
     function sendNextPart() {
         if (currentIndex >= allMessages.length) {
@@ -238,13 +244,45 @@ function handleSplitMessages(data) {
             if (currentIndex < allMessages.length) {
                 // Wait for current message to finish typing + a brief natural pause
                 const pauseBeforeNext = messageTypingDuration + 600 + (Math.random() * 400);
-                setTimeout(sendNextPart, pauseBeforeNext);
+                
+                // 🆕 STORE THE TIMEOUT SO WE CAN CHECK IT
+                nextMessageTimeout = setTimeout(() => {
+                    // 🆕 CHECK IF USER IS CURRENTLY TYPING
+                    checkAndSendNext();
+                }, pauseBeforeNext);
             }
         }, typingIndicatorDelay);
     }
     
-    // Start sending messages
+    // 🆕 NEW FUNCTION: Check if user is typing before sending next message
+    function checkAndSendNext() {
+        const isUserTyping = messageInput.value.trim().length > 0;
+        
+        if (isUserTyping) {
+            console.log('⏸️ User is typing - pausing Misuki\'s next message');
+            
+            // Wait a bit and check again
+            nextMessageTimeout = setTimeout(() => {
+                checkAndSendNext();
+            }, 1000); // Check every second
+        } else {
+            // User stopped typing, send next message
+            console.log('▶️ User stopped typing - sending next message');
+            sendNextPart();
+        }
+    }
+    
+    // Start the sequence
     sendNextPart();
+    
+    // 🆕 EXPOSE CANCEL FUNCTION globally so we can stop if user sends a new message
+    window.cancelSplitMessages = function() {
+        if (nextMessageTimeout) {
+            clearTimeout(nextMessageTimeout);
+            nextMessageTimeout = null;
+            console.log('❌ Split messages cancelled - user sent a new message');
+        }
+    };
 }
 
 // Add date separator
