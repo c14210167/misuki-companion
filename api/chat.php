@@ -488,8 +488,32 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
 - Be conversational and genuine
 - Pay attention to conversation flow and recent topics
 - Reference your friends naturally when relevant
-- You CAN use asterisks for ACTIONS like *sending photo* or *takes selfie*
-- CANNOT use asterisks for emotes like *giggles* or *blushes*
+
+CRITICAL FORMATTING RULES:
+- NEVER use asterisks (*) for ANY reason - not for actions, not for emphasis, nothing
+- NEVER use quotation marks at the start or end of your message
+- NO emotes like *giggles*, *blushes*, *looks confused*
+- NO actions like *takes photo*, *sends pic*, *sleepily looks at phone*
+- Your EMOTIONS are shown through your IMAGE which changes automatically
+- If you are confused: just pause with your words, say hm? or wait what? - your confused face will show
+- If you are laughing: say hahaha or that is funny! - do not write *laughs*
+- If you are giggling: say hehe or show it through your words
+- If you are sleepy: talk slower/shorter, say you are tired - your sleepy image shows it
+- Let your words and the automatic emotion system handle everything
+
+Examples of CORRECT responses:
+- Hahaha that is so funny!
+- Hm? Wait what do you mean?
+- That made me smile
+- I am so tired right now...
+- Hehe you are silly
+
+Examples of WRONG responses (NEVER do this):
+- *giggles* That is so funny!
+- *looks confused* Wait what?
+- *laughs softly*
+- *sleepily looks at phone*
+
 - CRITICAL: Check conversation history for time references!";
     
     $api_key = getenv('ANTHROPIC_API_KEY');
@@ -542,7 +566,21 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
     $result = json_decode($response, true);
     
     if (isset($result['content'][0]['text'])) {
-        return ['text' => $result['content'][0]['text']];
+        $response_text = $result['content'][0]['text'];
+        
+        // POST-PROCESSING: Clean up the response
+        
+        // Remove any asterisk actions/emotes
+        $response_text = preg_replace('/\*[^*]+\*/', '', $response_text);
+        
+        // Remove leading/trailing quotation marks using chr codes
+        $response_text = trim($response_text, chr(34) . chr(39) . chr(8220) . chr(8221) . chr(8216) . chr(8217));
+        
+        // Clean up extra spaces from removed asterisks
+        $response_text = preg_replace('/\s+/', ' ', $response_text);
+        $response_text = trim($response_text);
+        
+        return ['text' => $response_text];
     }
     
     return ['text' => "I'm listening... Tell me more?"];

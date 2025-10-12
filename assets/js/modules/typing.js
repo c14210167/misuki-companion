@@ -17,7 +17,7 @@ export function typeMessageWithEmotions(bubbleId, fullText, emotion_timeline) {
     let currentSentenceStart = 0;
     let lastEmotionSet = '';
     let isBackspacing = false;
-    let backspaceChance = 0.15;
+    let hasBackspaced = false; // Only backspace once per message
     
     const beepSound = new Audio('assets/audio/misuki beep.mp3');
     beepSound.volume = 0.3;
@@ -39,8 +39,23 @@ export function typeMessageWithEmotions(bubbleId, fullText, emotion_timeline) {
     }
     
     function shouldBackspace(emotion) {
-        const backspaceEmotions = ['nervous', 'shy', 'embarrassed', 'thoughtful', 'concerned', 'anxious'];
-        return backspaceEmotions.includes(emotion) && Math.random() < backspaceChance && characterIndex > 5;
+        // Only backspace if:
+        // 1. Haven't backspaced yet in this message
+        // 2. In a nervous/shy emotion
+        // 3. At the START of a word (so it makes sense)
+        // 4. Not too early in the message
+        const backspaceEmotions = ['nervous', 'shy', 'embarrassed', 'anxious', 'flustered'];
+        
+        if (!backspaceEmotions.includes(emotion)) return false;
+        if (hasBackspaced) return false;
+        if (characterIndex < 10) return false; // Need at least some text
+        
+        // Only backspace at word boundaries (after a space)
+        const currentText = bubble.textContent;
+        if (!currentText.endsWith(' ')) return false;
+        
+        // Low chance - 8% when all conditions are met
+        return Math.random() < 0.08;
     }
     
     function applyEmotionAnimation(emotion) {
@@ -106,23 +121,30 @@ export function typeMessageWithEmotions(bubbleId, fullText, emotion_timeline) {
         }
         addTremorEffect(currentEmotion);
         
-        if (!isBackspacing && shouldBackspace(currentEmotion) && characterIndex > 2) {
+        // Check if should backspace (only at word boundaries when nervous/shy)
+        if (!isBackspacing && shouldBackspace(currentEmotion)) {
             isBackspacing = true;
-            const backspaceCount = Math.floor(Math.random() * 3) + 2;
+            hasBackspaced = true; // Mark that we've backspaced
             
-            function doBackspace(count) {
-                if (count <= 0) {
+            // Delete the last word (go back to previous space)
+            const currentText = bubble.textContent;
+            const words = currentText.trim().split(' ');
+            const wordsToKeep = words.slice(0, -1); // Remove last word
+            const backspaceTarget = wordsToKeep.join(' ') + (wordsToKeep.length > 0 ? ' ' : '');
+            
+            function doBackspace() {
+                if (bubble.textContent.length > backspaceTarget.length) {
+                    bubble.textContent = bubble.textContent.slice(0, -1);
+                    characterIndex--;
+                    setTimeout(doBackspace, 50);
+                } else {
+                    // Done backspacing - pause before continuing
                     isBackspacing = false;
-                    setTimeout(typeNextCharacter, getTypingSpeed(currentEmotion));
-                    return;
+                    setTimeout(typeNextCharacter, 300 + Math.random() * 400); // Nervous pause
                 }
-                
-                bubble.textContent = bubble.textContent.slice(0, -1);
-                characterIndex--;
-                setTimeout(() => doBackspace(count - 1), 50);
             }
             
-            doBackspace(backspaceCount);
+            doBackspace();
             return;
         }
         

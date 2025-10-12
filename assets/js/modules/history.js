@@ -5,6 +5,7 @@
 
 import { chatMessages } from '../chat.js';
 import { addDateSeparator, addMessageInstant } from './messaging.js';
+import { updateMisukiMood, getEmotionText } from './emotions.js';
 
 // Load chat history on page load
 export async function loadChatHistory() {
@@ -48,6 +49,7 @@ export async function loadChatHistory() {
             chatMessages.innerHTML = '';
             
             let lastDate = null;
+            let lastMood = null; // Track the last mood from history
             
             // Add all previous conversations with date separators
             data.conversations.forEach((conv, index) => {
@@ -87,7 +89,18 @@ export async function loadChatHistory() {
                     // Normal single message
                     addMessageInstant('misuki', conv.misuki_response, conv.timestamp);
                 }
+                
+                // Track the last mood
+                if (conv.mood) {
+                    lastMood = conv.mood;
+                }
             });
+            
+            // Update Misuki's emotion to match the last message's mood
+            if (lastMood) {
+                console.log(`😊 Restoring Misuki's last emotion: ${lastMood}`);
+                updateMisukiMood(lastMood, getEmotionText(lastMood));
+            }
             
             // Scroll to bottom - force it multiple times to ensure it works
             setTimeout(() => {
