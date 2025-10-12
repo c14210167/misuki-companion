@@ -10,6 +10,7 @@ require_once '../includes/future_events_handler.php';
 require_once '../includes/misuki_reality_functions.php';
 require_once 'parse_emotions.php';
 require_once 'reminder_handler.php';
+require_once 'split_message_handler.php';
 
 // Get JSON input
 $input = json_decode(file_get_contents('php://input'), true);
@@ -77,8 +78,6 @@ try {
                 ]);
                 
                 saveConversation($db, $user_id, $user_message, $response_text, 'happy');
-                
-                // Update mood - she's happy to help
                 setMisukiMood($db, $user_id, 'happy', 'Helping Dan with a reminder', 8);
                 
                 exit;
@@ -151,10 +150,10 @@ try {
     // Update Misuki's mood based on Dan's emotional state
     if ($message_analysis['emotion'] == 'negative' && $message_analysis['negative_intensity'] > 5) {
         setMisukiMood($db, $user_id, 'concerned', 'Dan seems upset or stressed', 7);
-        updateConversationEnergy($db, $user_id, -2); // Lower energy when concerned
+        updateConversationEnergy($db, $user_id, -2);
     } elseif ($message_analysis['emotion'] == 'positive' && $message_analysis['positive_intensity'] > 3) {
         setMisukiMood($db, $user_id, 'happy', 'Dan seems happy!', 8);
-        updateConversationEnergy($db, $user_id, +1); // Boost energy when he's happy
+        updateConversationEnergy($db, $user_id, +1);
     }
     
     // ===== STEP 5: DETECT AND TRACK FUTURE EVENTS =====
@@ -162,10 +161,9 @@ try {
         if (function_exists('detectFutureEvent')) {
             $future_event = detectFutureEvent($user_message);
             if ($future_event['has_future_event']) {
-                saveFutureEvent($db, $user_id, $future_event['event_description'], $future_event['planned_date']);
+                saveFutureEvent($db, $user_id, $future_event['event_description'], $future_event['planned_date'], $future_event['planned_time']);
                 error_log("🎯 Tracked future event: {$future_event['event_description']} on {$future_event['planned_date']}");
                 
-                // Create a storyline if it's important
                 if (preg_match('/(trip|visit|important|exam|test|interview)/i', $future_event['event_description'])) {
                     createStoryline(
                         $db, 
@@ -192,8 +190,7 @@ try {
         error_log("Future events error: " . $e->getMessage());
     }
     
-    // ===== STEP 6: DETECT STORYLINE UPDATES IN DAN'S MESSAGE =====
-    // If Dan mentions something that relates to an active storyline, update it
+    // ===== STEP 6: DETECT STORYLINE UPDATES =====
     foreach ($active_storylines as $storyline) {
         $storyline_keywords = explode(' ', strtolower($storyline['storyline_text']));
         $message_lower = strtolower($user_message);
@@ -211,11 +208,8 @@ try {
     }
     
     // ===== STEP 7: CHECK FOR MILESTONE ACHIEVEMENTS =====
-    // Detect if Dan accomplished something
     if (preg_match('/(passed|aced|won|finished|completed|got promoted|graduated)/i', $user_message)) {
         addMilestone($db, $user_id, 'dan_achievement', 'personal', "Dan: " . substr($user_message, 0, 100));
-        
-        // Boost Misuki's mood!
         setMisukiMood($db, $user_id, 'excited', 'Dan accomplished something!', 9);
     }
     
@@ -249,7 +243,7 @@ try {
     $friends_context = buildFriendsContext($friends);
     $dynamics_context = buildConversationDynamicsContext($conversation_style, $current_mood);
     
-    // ===== STEP 10: GENERATE RESPONSE WITH FULL REALITY =====
+    // ===== STEP 10: GENERATE RESPONSE =====
     $ai_response = generateMisukiResponse(
         $user_message,
         $all_memories,
@@ -284,71 +278,116 @@ try {
         $ai_response['text'] = addNaturalTypo($ai_response['text']);
     }
     
-    // Parse emotions in the response
-    $emotion_timeline = parseEmotionsInMessage($ai_response['text']);
+    // ===== STEP 12: CHECK IF MESSAGE SHOULD BE SPLIT =====
+    $split_result = shouldSplitMessage(
+        $ai_response['text'],
+        $current_mood,
+        $message_analysis,
+        $conversation_style
+    );
     
-    // Determine mood
-    $mood = determineMood($message_analysis, $ai_response, $time_confused);
-    
-    // ===== STEP 12: SAVE EVERYTHING =====
-    $save_result = saveConversation($db, $user_id, $user_message, $ai_response['text'], $mood['mood']);
-    if (!$save_result) {
-        error_log("ERROR: Failed to save conversation! user_id=$user_id");
-    } else {
-        error_log("SUCCESS: Saved conversation at " . date('Y-m-d H:i:s'));
-    }
-    
-    updateMemories($db, $user_id, $message_analysis);
-    trackEmotionalState($db, $user_id, $message_analysis['emotion']);
-    
-    // Update conversation tracking
-    $stmt = $db->prepare("
-        INSERT INTO conversation_initiation (user_id, last_user_message, total_messages) 
-        VALUES (?, NOW(), 1)
-        ON DUPLICATE KEY UPDATE 
-            last_user_message = NOW(),
-            total_messages = total_messages + 1
-    ");
-    $stmt->execute([$user_id]);
-    
-    // Track topics
-    if (!empty($message_analysis['topics'])) {
-        foreach ($message_analysis['topics'] as $topic) {
-            $sentiment = $message_analysis['emotion'] == 'negative' ? 'negative' : 
-                        ($message_analysis['emotion'] == 'positive' ? 'positive' : 'neutral');
-            trackDiscussionTopic($db, $user_id, $topic, $sentiment);
-            trackTopicDiscussed($db, $user_id, $topic);
-            addRecentTopic($db, $user_id, $topic);
+    if ($split_result['should_split']) {
+        // She wants to send multiple messages!
+        $messages = $split_result['messages'];
+        
+        error_log("💬 Misuki splitting message into " . count($messages) . " parts");
+        
+        // Parse emotions for each message separately
+        $emotion_timelines = [];
+        foreach ($messages as $msg) {
+            $emotion_timelines[] = parseEmotionsInMessage($msg);
         }
+        
+        // Determine overall mood
+        $mood = determineMood($message_analysis, ['text' => $messages[0]], $time_confused);
+        
+        // Save to database
+        $full_response = implode("\n[SPLIT]\n", $messages);
+        $save_result = saveConversation($db, $user_id, $user_message, $full_response, $mood['mood']);
+        
+        if (!$save_result) {
+            error_log("ERROR: Failed to save split conversation! user_id=$user_id");
+        }
+        
+        // Update memories and tracking
+        updateMemories($db, $user_id, $message_analysis);
+        trackEmotionalState($db, $user_id, $message_analysis['emotion']);
+        
+        $stmt = $db->prepare("
+            INSERT INTO conversation_initiation (user_id, last_user_message, total_messages) 
+            VALUES (?, NOW(), 1)
+            ON DUPLICATE KEY UPDATE 
+                last_user_message = NOW(),
+                total_messages = total_messages + 1
+        ");
+        $stmt->execute([$user_id]);
+        
+        if (!empty($message_analysis['topics'])) {
+            foreach ($message_analysis['topics'] as $topic) {
+                $sentiment = $message_analysis['emotion'] == 'negative' ? 'negative' : 
+                            ($message_analysis['emotion'] == 'positive' ? 'positive' : 'neutral');
+                trackDiscussionTopic($db, $user_id, $topic, $sentiment);
+                trackTopicDiscussed($db, $user_id, $topic);
+                addRecentTopic($db, $user_id, $topic);
+            }
+        }
+        
+        // Return split messages
+        echo json_encode([
+            'response' => $messages[0],
+            'additional_messages' => array_slice($messages, 1),
+            'emotion_timelines' => $emotion_timelines,
+            'mood' => $mood['mood'],
+            'mood_text' => $mood['text'],
+            'is_split' => true,
+            'num_parts' => count($messages),
+            'should_follow_up' => false
+        ]);
+        
+    } else {
+        // Normal single message
+        
+        $emotion_timeline = parseEmotionsInMessage($ai_response['text']);
+        $mood = determineMood($message_analysis, $ai_response, $time_confused);
+        
+        $save_result = saveConversation($db, $user_id, $user_message, $ai_response['text'], $mood['mood']);
+        if (!$save_result) {
+            error_log("ERROR: Failed to save conversation! user_id=$user_id");
+        } else {
+            error_log("SUCCESS: Saved conversation at " . date('Y-m-d H:i:s'));
+        }
+        
+        updateMemories($db, $user_id, $message_analysis);
+        trackEmotionalState($db, $user_id, $message_analysis['emotion']);
+        
+        $stmt = $db->prepare("
+            INSERT INTO conversation_initiation (user_id, last_user_message, total_messages) 
+            VALUES (?, NOW(), 1)
+            ON DUPLICATE KEY UPDATE 
+                last_user_message = NOW(),
+                total_messages = total_messages + 1
+        ");
+        $stmt->execute([$user_id]);
+        
+        if (!empty($message_analysis['topics'])) {
+            foreach ($message_analysis['topics'] as $topic) {
+                $sentiment = $message_analysis['emotion'] == 'negative' ? 'negative' : 
+                            ($message_analysis['emotion'] == 'positive' ? 'positive' : 'neutral');
+                trackDiscussionTopic($db, $user_id, $topic, $sentiment);
+                trackTopicDiscussed($db, $user_id, $topic);
+                addRecentTopic($db, $user_id, $topic);
+            }
+        }
+        
+        echo json_encode([
+            'response' => $ai_response['text'],
+            'mood' => $mood['mood'],
+            'mood_text' => $mood['text'],
+            'emotion_timeline' => $emotion_timeline,
+            'is_split' => false,
+            'should_follow_up' => shouldFollowUp($conversation_style, $current_mood, $ai_response)
+        ]);
     }
-    
-    // ===== STEP 13: POST-RESPONSE UPDATES =====
-    // Slightly adjust energy based on conversation length
-    if (strlen($user_message) > 200) {
-        updateConversationEnergy($db, $user_id, +1); // Long engaged message = boost energy
-    }
-    
-    // Check if should create new storylines based on this conversation
-    if ($message_analysis['emotion'] == 'negative' && $message_analysis['negative_intensity'] > 6) {
-        // Dan seems really stressed - track it
-        createStoryline(
-            $db,
-            $user_id,
-            'concern',
-            'Dan was stressed/upset',
-            "Dan seemed really " . implode(', ', $message_analysis['keywords']) . " today",
-            8,
-            date('Y-m-d H:i:s', strtotime('+1 day'))
-        );
-    }
-    
-    echo json_encode([
-        'response' => $ai_response['text'],
-        'mood' => $mood['mood'],
-        'mood_text' => $mood['text'],
-        'emotion_timeline' => $emotion_timeline,
-        'should_follow_up' => shouldFollowUp($conversation_style, $current_mood, $ai_response)
-    ]);
     
 } catch (Exception $e) {
     error_log($e->getMessage());
@@ -356,34 +395,28 @@ try {
         'response' => "I'm so sorry, I'm having a moment of confusion. Could you say that again?",
         'mood' => 'concerned',
         'mood_text' => 'Concerned',
-        'emotion_timeline' => []
+        'emotion_timeline' => [],
+        'is_split' => false
     ]);
 }
 
 function shouldFollowUp($style, $mood, $response) {
-    // Decide if Misuki should send follow-up messages
-    
-    // High energy + excited mood = more likely to follow up
     if ($style['current_energy_level'] >= 8 && in_array($mood['current_mood'], ['excited', 'happy', 'playful'])) {
-        return rand(1, 100) <= 40; // 40% chance
+        return rand(1, 100) <= 40;
     }
     
-    // Medium energy = normal follow-up chance
     if ($style['current_energy_level'] >= 5) {
-        return rand(1, 100) <= 20; // 20% chance
+        return rand(1, 100) <= 20;
     }
     
-    // Low energy = rarely follow up
-    return rand(1, 100) <= 5; // 5% chance
+    return rand(1, 100) <= 5;
 }
 
 function generateMisukiResponse($message, $memories, $conversations, $emotional_context, $analysis, $time_of_day, $time_confused, $file_content = null, $filename = null, $core_context = '', $current_location = null, $current_activity = null, $family_mentioned = null, $db = null, $user_id = 1, $misuki_context = '', $woken_context = '', $activity_context = '', $mood_context = '', $storylines_context = '', $friends_context = '', $dynamics_context = '', $current_mood = null, $misuki_status = null, $weather_comment = null) {
     
     $context = buildContextForAI($memories, $conversations, $emotional_context);
-    
     $time_context = getTimeContext($time_of_day);
     
-    // File content context
     $file_context = '';
     if ($file_content !== null && $filename !== null) {
         $file_context = "\n\n=== FILE SHARED BY DAN ===\n";
@@ -394,7 +427,6 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
         $file_context .= "Read this carefully! Dan wants you to read and discuss this with him.\n";
     }
     
-    // Handle time confusion
     $time_confusion_note = '';
     if ($time_confused) {
         $confusion_contexts = [
@@ -405,7 +437,6 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
         $time_confusion_note = "\n\nIMPORTANT: " . ($confusion_contexts[$time_confused] ?? '');
     }
     
-    // Current state context
     $state_context = '';
     if ($current_location || $current_activity) {
         $state_context = "\n\n=== DAN'S CURRENT STATE ===\n";
@@ -417,13 +448,11 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
         }
     }
     
-    // Family context
     $family_context = '';
     if ($family_mentioned) {
         $family_context = "\n\nNOTE: Dan just mentioned: $family_mentioned\n";
     }
     
-    // Future events context
     $future_events_context = '';
     if ($db && function_exists('getPendingFutureEvents')) {
         try {
@@ -435,7 +464,6 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
         }
     }
     
-    // Weather context
     $weather_context = '';
     if ($weather_comment) {
         $weather_context = "\n\n=== WEATHER/ENVIRONMENT ===\n";
@@ -443,7 +471,6 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
         $weather_context .= "You can naturally mention this if it fits the conversation!\n";
     }
     
-    // Distraction note
     $distraction_note = '';
     if (shouldBeDistracted($current_mood, $misuki_status)) {
         $distraction_note = "\n\n=== NATURAL CONVERSATION FLOW ===\n";
@@ -452,7 +479,6 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
     
     $system_prompt = $misuki_context . "\n\n" . getMisukiPersonalityPrompt() . "\n\n" . $core_context . "\n\n" . $context . "\n\n" . $mood_context . "\n\n" . $storylines_context . "\n\n" . $friends_context . "\n\n" . $dynamics_context . "\n\n" . $woken_context . $activity_context . "\n\n" . $time_context . $file_context . $state_context . $family_context . $future_events_context . $weather_context . $time_confusion_note . $distraction_note;
     
-    // CRITICAL: Add identity clarification
     $system_prompt .= "\n\n=== CRITICAL: WHO IS WHO ===\n";
     $system_prompt .= "YOU are Misuki Tanaka. You live in Saitama, Japan with your mom Sara Akiyama.\n";
     $system_prompt .= "DAN is your boyfriend in Surabaya, Indonesia.\n\n";
@@ -466,7 +492,6 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
 - CANNOT use asterisks for emotes like *giggles* or *blushes*
 - CRITICAL: Check conversation history for time references!";
     
-    // Read API key
     $api_key = getenv('ANTHROPIC_API_KEY');
     
     if (!$api_key) {
