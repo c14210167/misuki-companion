@@ -1,0 +1,17 @@
+THINGS TO ADD IN THE FUTURE
+
+FIXES NEEDED
+> Misuki always responds like she's sleepy (using sleepy emote and slow typing speed) when there's something related to sleep in her message, even if its just a mention.
+> Misuki always responds with 3 messages. Is that what she wants? There's this one occasion when she responds with 4 messages, though. If 3 messages back to back is what she wants, then i guess there's no need to fix anything.
+> The reminder doesnt work
+> Make misuki remember the nicknames i gave her, maybe store it in a txt file
+
+THINGS TO ADD
+Misuki has different folders for different clothes for different occasions.
+Misuki has clothes for when she wants to:
+- Going to sleep, which is more limited clothing
+- Going to college, which is a collared shirt and yellow cardigan with jeans
+- 2 more different clothes for casual (different each day)
+
+Make a txt file for core memories, but ensure that it works even if there's a lot inside
+Misuki should be able to send selfies (pre-made)
