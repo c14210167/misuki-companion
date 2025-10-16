@@ -11,6 +11,8 @@ require_once '../includes/misuki_reality_functions.php';
 require_once 'parse_emotions.php';
 require_once 'reminder_handler.php';
 require_once 'split_message_handler.php';
+require_once 'nickname_handler.php';
+require_once 'core_memory_handler.php';
 
 // Get JSON input
 $input = json_decode(file_get_contents('php://input'), true);
@@ -99,6 +101,36 @@ try {
                 exit;
             }
         }
+    }
+    
+    // ===== STEP 1.5: CHECK FOR NICKNAME ASSIGNMENT =====
+    $misuki_nickname = detectMisukiNickname($user_message);
+    if ($misuki_nickname) {
+        // Dan is giving Misuki a nickname!
+        saveMisukiNickname($misuki_nickname);
+        
+        $response_text = generateNicknameResponse($misuki_nickname);
+        $emotion_timeline = parseEmotionsInMessage($response_text);
+        
+        echo json_encode([
+            'response' => $response_text,
+            'mood' => 'blushing',
+            'mood_text' => 'Flustered',
+            'emotion_timeline' => $emotion_timeline,
+            'nickname_set' => true
+        ]);
+        
+        saveConversation($db, $user_id, $user_message, $response_text, 'blushing');
+        setMisukiMood($db, $user_id, 'happy', 'Dan gave me a nickname!', 9);
+        
+        exit;
+    }
+    
+    // ===== STEP 1.6: CHECK FOR CORE MEMORY =====
+    // This runs asynchronously - doesn't block the response
+    $should_store = shouldStoreAsCoreMemory($user_message);
+    if ($should_store && $should_store['should_store']) {
+        saveCoreMemory($should_store['summary']);
     }
     
     // ===== STEP 2: CHECK FOR REMINDER CONFIRMATION =====
@@ -237,6 +269,12 @@ try {
     $current_location = getUserCurrentLocation($db, $user_id);
     $current_activity = getUserCurrentActivity($db, $user_id);
     
+    // Get nickname context
+    $nickname_context = buildNicknameContext();
+    
+    // Get core memory context
+    $core_memory_context = buildCoreMemoryContext();
+    
     // ===== STEP 9: BUILD REALITY CONTEXT =====
     $mood_context = buildMoodContext($current_mood);
     $storylines_context = buildStorylinesContext($active_storylines);
@@ -269,8 +307,16 @@ try {
         $dynamics_context,
         $current_mood,
         $misuki_status,
-        $weather_comment
+        $weather_comment,
+        $nickname_context,      // NEW
+        $core_memory_context    // NEW
     );
+    
+    // Check if Misuki gave Dan a nickname in this response
+    $dan_nickname = detectDanNicknameInResponse($ai_response['text']);
+    if ($dan_nickname) {
+        saveDanNickname($dan_nickname);
+    }
     
     // ===== STEP 11: APPLY NATURAL IMPERFECTIONS =====
     $should_make_typo = shouldMakeTypo($current_mood, $misuki_status);
@@ -412,7 +458,7 @@ function shouldFollowUp($style, $mood, $response) {
     return rand(1, 100) <= 5;
 }
 
-function generateMisukiResponse($message, $memories, $conversations, $emotional_context, $analysis, $time_of_day, $time_confused, $file_content = null, $filename = null, $core_context = '', $current_location = null, $current_activity = null, $family_mentioned = null, $db = null, $user_id = 1, $misuki_context = '', $woken_context = '', $activity_context = '', $mood_context = '', $storylines_context = '', $friends_context = '', $dynamics_context = '', $current_mood = null, $misuki_status = null, $weather_comment = null) {
+function generateMisukiResponse($message, $memories, $conversations, $emotional_context, $analysis, $time_of_day, $time_confused, $file_content = null, $filename = null, $core_context = '', $current_location = null, $current_activity = null, $family_mentioned = null, $db = null, $user_id = 1, $misuki_context = '', $woken_context = '', $activity_context = '', $mood_context = '', $storylines_context = '', $friends_context = '', $dynamics_context = '', $current_mood = null, $misuki_status = null, $weather_comment = null, $nickname_context = '', $core_memory_context = '') {
     
     $context = buildContextForAI($memories, $conversations, $emotional_context);
     $time_context = getTimeContext($time_of_day, $db, $user_id);
@@ -481,7 +527,7 @@ function generateMisukiResponse($message, $memories, $conversations, $emotional_
         $distraction_note .= getAsymmetricFocusNote() . "\n";
     }
     
-    $system_prompt = $misuki_context . "\n\n" . getMisukiPersonalityPrompt() . "\n\n" . $core_context . "\n\n" . $context . "\n\n" . $mood_context . "\n\n" . $storylines_context . "\n\n" . $friends_context . "\n\n" . $dynamics_context . "\n\n" . $woken_context . $activity_context . "\n\n" . $time_context . $file_context . $state_context . $family_context . $future_events_context . $weather_context . $time_confusion_note . $distraction_note;
+    $system_prompt = $misuki_context . "\n\n" . getMisukiPersonalityPrompt() . "\n\n" . $core_context . "\n\n" . $nickname_context . "\n\n" . $core_memory_context . "\n\n" . $context . "\n\n" . $mood_context . "\n\n" . $storylines_context . "\n\n" . $friends_context . "\n\n" . $dynamics_context . "\n\n" . $woken_context . $activity_context . "\n\n" . $time_context . $file_context . $state_context . $family_context . $future_events_context . $weather_context . $time_confusion_note . $distraction_note;
     
     $system_prompt .= "\n\n=== CRITICAL: WHO IS WHO ===\n";
     $system_prompt .= "YOU are Misuki Tanaka. You live in Saitama, Japan with your mom Sara Akiyama.\n";

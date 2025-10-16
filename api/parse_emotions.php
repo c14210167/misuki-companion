@@ -2,6 +2,7 @@
 // OPTIMIZED: Batch AI-Powered Emotion Detection
 // Analyzes ALL sentences in ONE API call instead of multiple calls
 // ANTI-FLICKER: Removes emotions that are too short to display properly
+// FIXED: Sleepy emotion only triggers when Misuki is actually tired
 
 function parseEmotionsInMessage($message) {
     // Split message into sentences
@@ -64,7 +65,7 @@ function detectEmotionsBatch($sentences) {
         $sentence_list .= "$num. \"$sentence\"\n";
     }
     
-    // Create batch emotion detection prompt
+    // Create batch emotion detection prompt - UPDATED WITH SLEEPY FIX
     $prompt = "You are an emotion classifier for an anime girlfriend character named Misuki. Analyze each sentence and return its emotion.
 
 Available emotions (choose ONLY from this list):
@@ -78,6 +79,12 @@ CRITICAL RULES:
 - Questions = curious (unless clearly confused)
 - Supportive phrases = comforting/reassuring
 - If neutral/unclear = gentle
+
+⚠️ IMPORTANT - SLEEPY EMOTION RULE:
+- ONLY use 'sleepy' if Misuki HERSELF is expressing tiredness/sleepiness
+- Examples of sleepy: \"I'm so sleepy\", \"*yawns*\", \"can barely keep my eyes open\", \"getting really tired\"
+- DO NOT use 'sleepy' for: \"Did you sleep well?\", \"go to bed\", \"good night\", \"time for sleep\"
+- Mere mentions of sleep/bed are NOT the sleepy emotion - use neutral/curious/gentle instead
 
 Return ONLY emotions in this format (one per line):
 1: emotion
@@ -168,8 +175,27 @@ function parseEmotionResponse($response_text, $expected_count) {
 }
 
 function detectEmotionKeywordFallback($sentence) {
-    // Simplified keyword-based fallback (only for when AI fails)
+    // FIXED: Simplified keyword-based fallback with proper sleepy detection
     $sentence_lower = strtolower($sentence);
+    
+    // === SLEEPY FIX: Only trigger if Misuki herself is tired ===
+    $actually_sleepy_patterns = [
+        '/^i\'m (?:so |really |very )?(?:sleepy|drowsy|tired|exhausted)/i',
+        '/\bcan barely keep my eyes open\b/i',
+        '/\babout to fall asleep\b/i',
+        '/\bgetting (?:so |really )?sleepy\b/i',
+        '/\bfeeling (?:so |really )?(?:sleepy|drowsy|tired)\b/i',
+        '/\*yawn/i',
+        '/😴/',
+        '/💤/'
+    ];
+    
+    foreach ($actually_sleepy_patterns as $pattern) {
+        if (preg_match($pattern, $sentence_lower)) {
+            return 'sleepy';
+        }
+    }
+    // Note: Mere mentions of sleep/bed are NOT sleepy emotion
     
     // High priority: Negative emotions
     if (preg_match('/\b(creepy|scary|terrifying|awful|terrible|horrible)\b/i', $sentence_lower)) {

@@ -43,13 +43,34 @@ const moodImages = {
 };
 
 // Update Misuki's mood (image + text)
-export function updateMisukiMood(mood, moodText) {
-    if (moodImages[mood]) {
-        misukiImage.src = moodImages[mood];
+export function updateMisukiMood(emotion, moodText) {
+    const moodDisplay = document.querySelector('.misuki-mood-text');
+    const misukiImage = document.querySelector('.misuki-image');
+    
+    if (moodDisplay) {
+        moodDisplay.textContent = moodText || getEmotionText(emotion);
     }
-    misukiMood.textContent = `● ${moodText} ●`;
+    
+    if (misukiImage) {
+        // Determine image path based on private mode
+        let imagePath;
+        if (window.isPrivateMode) {
+            // Use private folder images
+            imagePath = `assets/images/misuki-private/${emotion}.png`;
+            
+            // Fallback to normal if private doesn't exist
+            misukiImage.onerror = function() {
+                this.onerror = null;
+                this.src = getEmotionImage(emotion);
+            };
+        } else {
+            imagePath = getEmotionImage(emotion);
+        }
+        
+        misukiImage.src = imagePath;
+        misukiImage.alt = emotion;
+    }
 }
-
 // Get emotion display text
 export function getEmotionText(emotion) {
     const emotionTexts = {

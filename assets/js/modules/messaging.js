@@ -2,6 +2,7 @@
 // MESSAGING MODULE
 // Handles sending messages, typing, and display
 // =========================================
+window.isPrivateMode = false;
 
 import { 
     chatMessages, 
@@ -169,6 +170,11 @@ export async function sendMessage() {
         });
 
         const data = await response.json();
+        // Check if private mode changed
+        if (data.private_mode !== undefined) {
+            window.isPrivateMode = data.private_mode;
+            console.log('Private mode:', window.isPrivateMode ? 'ACTIVE 🔒' : 'INACTIVE');
+        }
         
         // Check if message is split
         if (data.is_split && data.additional_messages) {
