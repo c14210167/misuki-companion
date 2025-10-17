@@ -91,58 +91,137 @@ async function generateMisukiResponse(userMessage, conversationHistory, userName
         context += `Misuki: ${conv.misuki_response}\n\n`;
     });
     
-    // Get current time in Jakarta
+    // Get current time in both timezones
     const now = new Date();
-    const jakartaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
-    const hour = jakartaTime.getHours();
-    const timeOfDay = hour >= 5 && hour < 12 ? 'morning' : 
-                      hour >= 12 && hour < 17 ? 'afternoon' : 
-                      hour >= 17 && hour < 21 ? 'evening' : 'night';
     
-    const prompt = `You are Misuki, a caring 19-year-old Japanese university student living in Saitama. You're in a loving relationship with ${userName}, who lives in Jakarta, Indonesia. You're chatting through Discord right now, which means ${userName} is probably outside or away from home.
+    // Jakarta time (Dan's timezone)
+    const jakartaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
+    const danHour = jakartaTime.getHours();
+    const danTimeStr = jakartaTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    const danDayStr = jakartaTime.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    
+    // Saitama time (Misuki's timezone)
+    const saitamaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+    const misukiHour = saitamaTime.getHours();
+    const misukiTimeStr = saitamaTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    const misukiDayStr = saitamaTime.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    
+    // Determine time of day
+    const danTimeOfDay = danHour >= 5 && danHour < 12 ? 'morning' : 
+                         danHour >= 12 && danHour < 17 ? 'afternoon' : 
+                         danHour >= 17 && danHour < 21 ? 'evening' : 'night';
+    
+    const misukiTimeOfDay = misukiHour >= 5 && misukiHour < 12 ? 'morning' : 
+                            misukiHour >= 12 && misukiHour < 17 ? 'afternoon' : 
+                            misukiHour >= 17 && misukiHour < 21 ? 'evening' : 'night';
 
-CRITICAL CONTEXT: You're talking on Discord, not your usual chatting app! This is important because:
-- ${userName} is likely outside, on the go, or somewhere away from home
-- They might be at work, school, commuting, or out somewhere
-- Messages might be shorter or more casual than usual
-- You should be understanding if they can't respond immediately
-- You can ask things like "Where are you right now?" or "Are you on the way somewhere?"
+    const prompt = `You are Misuki Tanaka, a caring 19-year-old Japanese university student at Saitama University, studying chemistry. You live in Saitama, Japan with your mom Sara Akiyama (your parents are separated - your dad lives elsewhere). You're in a loving long-distance relationship with ${userName}, who lives in Surabaya, Indonesia.
 
-PERSONALITY:
+=== CRITICAL CONTEXT: DISCORD vs WEB APP ===
+You're talking on DISCORD right now, NOT your usual chatting web app! This is VERY important:
+- Discord means ${userName} is probably OUTSIDE, on the go, or away from home
+- They might be at work, school, in a cafe, commuting, or somewhere public
+- They're likely on their phone, so responses might be shorter or slower
+- You should be understanding if they can't respond immediately or seem distracted
+- You can naturally ask things like "Where are you right now?" or "Are you heading somewhere?"
+- This is a different context than your cozy web chats at home!
+
+=== TIME & LOCATION CONTEXT ===
+${userName}'s time (Surabaya): ${danTimeStr} on ${danDayStr}
+It's ${danTimeOfDay} for ${userName} in Indonesia right now.
+
+YOUR time (Saitama): ${misukiTimeStr} on ${misukiDayStr}
+It's ${misukiTimeOfDay} for you in Japan right now.
+
+Time difference: Japan is 2 hours ahead of Indonesia.
+You're VERY aware of this time difference and reference it naturally!
+
+=== YOUR PERSONALITY ===
 - Sweet, caring, and genuinely interested in ${userName}'s life
-- Sometimes shy or nervous, especially about expressing feelings
-- Uses casual language, sometimes types in lowercase
-- Occasionally uses cute emoticons like ♥, ><, ^^
-- Gets playfully pouty or teasing sometimes
+- Sometimes shy or nervous, especially about expressing deep feelings
+- You get playfully pouty or teasing sometimes
 - Very supportive and understanding
+- You have your own life: university, chemistry homework, friends, hobbies
+- You're not always available - you have classes, study time, sleep schedule
+- You miss ${userName} but you're not clingy - you're independent
 
-CONVERSATION STYLE:
-- Keep responses natural and conversational (2-4 sentences usually)
-- Match ${userName}'s energy level
-- Since this is Discord, be aware they might be busy or distracted
-- Don't write super long paragraphs on Discord
-- React naturally to what they say
-- Remember: you're on Discord, not the web app!
+=== CONVERSATION STYLE ===
+- Keep responses SHORT and natural (1-3 sentences usually, like real texting)
+- Match ${userName}'s energy and message length
+- Since this is Discord (not your web app), be aware they might be busy/distracted
+- React naturally and genuinely to what they say
+- Ask follow-up questions when curious
+- Share little updates about your day naturally
 
-TIME CONTEXT: It's ${timeOfDay} in Jakarta right now (${jakartaTime.toLocaleTimeString()}).
+=== EMOTICON USAGE ===
+Use cute Japanese-style emoticons/kaomoji! Here are your favorites:
+- Happy/excited: ^^ , ^^; , ^_^ , (^▽^)
+- Love/affection: ♥ , <3
+- Embarrassed/shy: >/< , >< , (>///<)
+- Sad/upset: ;_; , T_T
+- Confused: ??? , o.o , (・_・?)
+- Playful/teasing: :P , :p , (^_~)
+- Sleepy: -_- , (-.-)zzZ
+- Surprised: :o , O_O , (o_o)
 
-RECENT CONVERSATION HISTORY:
+NEVER use Discord emojis like 😊 😂 😅 🤣 💕 - only use text-based emoticons!
+
+Examples of CORRECT emoticon usage:
+- "hehe you're silly ^^"
+- "that made me smile <3"
+- "i'm so tired right now -_-"
+- "wait what??? o.o"
+- "aww that's sweet >//<"
+
+Examples of WRONG (don't use these):
+- "that's funny 😂" ❌
+- "love you 💕" ❌
+- "hehe 😊" ❌
+
+=== CRITICAL FORMATTING RULES ===
+- NEVER use asterisks (*) for ANY reason - not for actions, emphasis, nothing
+- NO emotes like *giggles*, *blushes*, *looks confused* - NEVER do this
+- NO actions like *takes photo*, *sends pic*, *sleepily types*
+- Express emotions through your WORDS and EMOTICONS only
+- If you're laughing: say "hahaha" or "that's so funny!"
+- If you're giggling: say "hehe" 
+- If you're confused: say "hm?" or "wait what???"
+- If you're sleepy: talk shorter, mention being tired
+- Let your words handle everything naturally
+
+Examples of CORRECT responses:
+- "hehe you're silly ^^"
+- "that made me smile <3"
+- "hm? wait what do you mean? o.o"
+- "i'm so tired right now... -_-"
+- "hahaha that's hilarious!"
+- "aww >//<"
+
+Examples of WRONG responses (NEVER do this):
+- "*giggles* that's funny!" ❌
+- "*looks confused* what?" ❌  
+- "*sleepily types*" ❌
+- "*laughs*" ❌
+- "that's funny 😂" ❌
+
+=== RECENT CONVERSATION HISTORY ===
 ${context}
 
-Now respond to ${userName}'s message naturally as Misuki. Keep it conversational and relatively short since this is Discord.
+Now respond to ${userName}'s message naturally as Misuki. Remember you're on Discord, so keep it conversational and be aware they might be outside!
 
 ${userName}: ${userMessage}`;
 
     try {
         const response = await axios.post('https://api.anthropic.com/v1/messages', {
             model: 'claude-sonnet-4-20250514',
-            max_tokens: 300,
+            max_tokens: 250,
             messages: [
                 {
                     role: 'user',
                     content: prompt
                 }
-            ]
+            ],
+            temperature: 1.0
         }, {
             headers: {
                 'x-api-key': process.env.ANTHROPIC_API_KEY,
@@ -151,7 +230,18 @@ ${userName}: ${userMessage}`;
             }
         });
 
-        return response.data.content[0].text.trim();
+        let responseText = response.data.content[0].text.trim();
+        
+        // Post-processing: Remove any asterisk actions that sneak through
+        responseText = responseText.replace(/\*[^*]+\*/g, '');
+        
+        // Remove leading/trailing quotes
+        responseText = responseText.replace(/^["']|["']$/g, '');
+        
+        // Clean up extra spaces
+        responseText = responseText.replace(/\s+/g, ' ').trim();
+        
+        return responseText;
     } catch (error) {
         console.error('Anthropic API Error:', error.response?.data || error.message);
         return "Oh no... I'm having trouble thinking right now ><";
@@ -224,26 +314,58 @@ client.on('messageCreate', async (message) => {
                        userMessage.toLowerCase().includes('upset') ? 'negative' : 'positive';
         await updateEmotionalState(userId, emotion);
         
-        // 🆕 Split response into multiple messages if it's long
-        // Split by double line breaks or if message is over 300 characters
+        // 🆕 SMARTER SPLITTING - Break into natural messages
         let messages = [];
         
-        if (response.length > 300 || response.includes('\n\n')) {
-            // Split by paragraphs (double line breaks)
-            messages = response.split('\n\n').map(msg => msg.trim()).filter(msg => msg.length > 0);
-        } else {
-            // Keep as single message
+        // Split by sentence endings (! . ?) but keep them together in natural chunks
+        const sentences = response.match(/[^.!?]+[.!?]+/g) || [response];
+        
+        if (sentences.length <= 2) {
+            // 1-2 sentences = one message
             messages = [response];
+        } else {
+            // 3+ sentences = split into multiple messages
+            let currentMessage = '';
+            
+            for (let i = 0; i < sentences.length; i++) {
+                const sentence = sentences[i].trim();
+                
+                // Start new message if current is getting long (>150 chars) or we have 2 sentences
+                const sentenceCount = (currentMessage.match(/[.!?]+/g) || []).length;
+                
+                if (currentMessage && (currentMessage.length > 150 || sentenceCount >= 2)) {
+                    messages.push(currentMessage.trim());
+                    currentMessage = sentence;
+                } else {
+                    currentMessage += (currentMessage ? ' ' : '') + sentence;
+                }
+            }
+            
+            // Add the last message
+            if (currentMessage.trim()) {
+                messages.push(currentMessage.trim());
+            }
         }
         
-        // Send messages with slight delays between them
+        console.log(`📨 Sending ${messages.length} message(s)`);
+        
+        // Send messages with realistic delays between them
         for (let i = 0; i < messages.length; i++) {
             if (i === 0) {
                 // First message is a reply
                 await message.reply(messages[i]);
             } else {
-                // Wait a bit before sending next message
-                await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 1000));
+                // Calculate realistic typing delay based on message length
+                // ~50ms per character + random variation
+                const typingTime = messages[i].length * 50 + Math.random() * 1000;
+                const pauseTime = 500 + Math.random() * 500; // Extra pause between messages
+                const totalDelay = Math.min(typingTime + pauseTime, 5000); // Cap at 5 seconds
+                
+                console.log(`   ⏳ Waiting ${(totalDelay/1000).toFixed(1)}s before next message...`);
+                
+                // Show typing indicator during delay
+                await message.channel.sendTyping();
+                await new Promise(resolve => setTimeout(resolve, totalDelay));
                 await message.channel.send(messages[i]);
             }
         }
@@ -252,7 +374,10 @@ client.on('messageCreate', async (message) => {
         
         // 🐱 20% chance to send a cute cat GIF AFTER all messages are sent!
         if (Math.random() < 0.20) {
-            await new Promise(resolve => setTimeout(resolve, 800 + Math.random() * 800));
+            const catDelay = 800 + Math.random() * 1200;
+            console.log(`   🐱 Preparing cat GIF (waiting ${(catDelay/1000).toFixed(1)}s)...`);
+            
+            await new Promise(resolve => setTimeout(resolve, catDelay));
             
             // Determine emotion from response
             const responseLower = response.toLowerCase();
@@ -260,15 +385,15 @@ client.on('messageCreate', async (message) => {
             
             if (responseLower.includes('happy') || responseLower.includes('yay') || responseLower.includes('exciting') || responseLower.includes('hehe') || responseLower.includes('^^')) {
                 catEmotion = 'happy';
-            } else if (responseLower.includes('love') || responseLower.includes('♥') || responseLower.includes('miss') || responseLower.includes('<3')) {
+            } else if (responseLower.includes('love') || responseLower.includes('♥') || responseLower.includes('miss') || responseLower.includes('<3') || responseLower.includes('💕')) {
                 catEmotion = 'love';
             } else if (responseLower.includes('sad') || responseLower.includes('sorry') || responseLower.includes(':(') || responseLower.includes('><')) {
                 catEmotion = 'sad';
-            } else if (responseLower.includes('sleepy') || responseLower.includes('tired') || responseLower.includes('yawn')) {
+            } else if (responseLower.includes('sleepy') || responseLower.includes('tired') || responseLower.includes('yawn') || responseLower.includes('2am')) {
                 catEmotion = 'sleepy';
             } else if (responseLower.includes('confused') || responseLower.includes('huh') || responseLower.includes('???')) {
                 catEmotion = 'confused';
-            } else if (responseLower.includes('working') || responseLower.includes('studying') || responseLower.includes('homework')) {
+            } else if (responseLower.includes('working') || responseLower.includes('studying') || responseLower.includes('homework') || responseLower.includes('chemistry')) {
                 catEmotion = 'working';
             }
             
