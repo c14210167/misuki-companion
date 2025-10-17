@@ -1,5 +1,23 @@
 <?php
+// ADD ERROR REPORTING AT THE TOP
+ini_set('display_errors', 1);
+ini_set('log_errors', 1);
+error_reporting(E_ALL);
+
 header('Content-Type: application/json');
+
+// Test if the schedule file exists
+$schedule_path = __DIR__ . '/../misuki_weekly_schedule.php';
+if (!file_exists($schedule_path)) {
+    echo json_encode([
+        'error' => 'Schedule file not found',
+        'path_tried' => $schedule_path,
+        'dirname' => __DIR__,
+        'files_in_parent' => scandir(__DIR__ . '/..')
+    ]);
+    exit;
+}
+
 require_once '../config/database.php';
 require_once '../includes/functions.php';
 require_once '../includes/core_profile_functions.php';
@@ -247,9 +265,38 @@ try {
     
     // ===== STEP 8: GET ENHANCED CONTEXT =====
     
+    error_log("DEBUG: About to get Misuki status");
     $misuki_status = getMisukiCurrentStatus($db, $user_id);
+    error_log("DEBUG: Got Misuki status: " . json_encode($misuki_status));
+
+    // 🆕 Get the detailed activity for better context
+    error_log("DEBUG: About to require weekly schedule");
+    require_once __DIR__ . '/../misuki_weekly_schedule.php';
+    error_log("DEBUG: Required weekly schedule");
+    
+    error_log("DEBUG: About to get current activity");
+    $current_activity = getMisukiCurrentActivity();
+    error_log("DEBUG: Got current activity: " . json_encode($current_activity));
+
     $woken_context = generateWokenUpContext($misuki_status);
-    $activity_context = generateActivityContext($misuki_status);
+
+    // 🆕 Enhanced activity context with detailed schedule
+    $activity_context = "\n\n=== YOUR CURRENT ACTIVITY (DETAILED) ===\n";
+    $activity_context .= "Right now you are: " . $current_activity['activity'] . " " . $current_activity['emoji'] . "\n";
+    $activity_context .= "Activity type: " . $current_activity['type'] . "\n";
+    $activity_context .= "Time: " . $current_activity['time'] . "\n";
+
+    if ($current_activity['type'] === 'class') {
+        $activity_context .= "You're currently in class, so you should respond briefly and mention you're in lecture!\n";
+    } elseif ($current_activity['type'] === 'sleep') {
+        $activity_context .= "You were sleeping and Dan just woke you up with a message!\n";
+    } elseif ($current_activity['type'] === 'studying') {
+        $activity_context .= "You're studying right now, so you might be a bit distracted.\n";
+    } elseif ($current_activity['type'] === 'commute') {
+        $activity_context .= "You're commuting right now (train/walking), so you're on your phone!\n";
+    }
+
+    $activity_context .= "\nThis is your REAL current activity from your schedule. Reference it naturally!\n";
     
     updateMisukiStatus($db, $user_id, $misuki_status['status']);
     
@@ -267,7 +314,7 @@ try {
     $emotional_context = getEmotionalContext($db, $user_id);
     
     $current_location = getUserCurrentLocation($db, $user_id);
-    $current_activity = getUserCurrentActivity($db, $user_id);
+    $current_activity_user = getUserCurrentActivity($db, $user_id);
     
     // Get nickname context
     $nickname_context = buildNicknameContext();
@@ -294,7 +341,7 @@ try {
         $filename,
         $core_context,
         $current_location,
-        $current_activity,
+        $current_activity_user,
         $family_mentioned,
         $db,
         $user_id,
@@ -308,8 +355,8 @@ try {
         $current_mood,
         $misuki_status,
         $weather_comment,
-        $nickname_context,      // NEW
-        $core_memory_context    // NEW
+        $nickname_context,
+        $core_memory_context
     );
     
     // Check if Misuki gave Dan a nickname in this response
@@ -436,14 +483,16 @@ try {
     }
     
 } catch (Exception $e) {
-    error_log($e->getMessage());
+    error_log("CRITICAL ERROR: " . $e->getMessage());
+    error_log("Stack trace: " . $e->getTraceAsString());
+    
     echo json_encode([
-        'response' => "I'm so sorry, I'm having a moment of confusion. Could you say that again?",
-        'mood' => 'concerned',
-        'mood_text' => 'Concerned',
-        'emotion_timeline' => [],
-        'is_split' => false
+        'error' => $e->getMessage(),
+        'file' => $e->getFile(),
+        'line' => $e->getLine(),
+        'trace' => $e->getTraceAsString()
     ]);
+    exit;
 }
 
 function shouldFollowUp($style, $mood, $response) {

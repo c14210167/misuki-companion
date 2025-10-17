@@ -25,218 +25,59 @@ function getMisukiCurrentStatus($db, $user_id) {
         ];
     }
     
-    // Normal schedule
-    $current_hour = (int)date('G');
-    $current_minute = (int)date('i');
-    $day_of_week = date('l');
-    $time_decimal = $current_hour + ($current_minute / 60);
+    // 🆕 USE THE NEW DETAILED SCHEDULE!
+    require_once 'misuki_weekly_schedule.php';
+    $detailedStatus = getMisukiDetailedStatus();
     
     // Check if she was just woken up by a message
-    $was_sleeping = checkIfWasSleeping($db, $user_id);
-    
-    // Determine her status
-    $status = determineStatus($time_decimal, $day_of_week, $was_sleeping);
+    $was_sleeping = ($detailedStatus['type'] === 'sleep');
     
     // Reset timezone
     date_default_timezone_set('Asia/Jakarta');
     
-    return $status;
+    return [
+        'status' => $detailedStatus['type'],
+        'emoji' => $detailedStatus['emoji'],
+        'text' => $detailedStatus['status'],
+        'detail' => $detailedStatus['status'],
+        'color' => getColorForType($detailedStatus['type']),
+        'was_woken' => $was_sleeping && checkIfWasJustMessaged($db, $user_id),
+        'is_override' => false
+    ];
 }
 
-function checkIfWasSleeping($db, $user_id) {
-    // Check last message time and last status
+// Helper function to get colors
+function getColorForType($type) {
+    $colors = [
+        'personal' => '#FF69B4',
+        'class' => '#FFD700',
+        'studying' => '#87CEEB',
+        'commute' => '#98FB98',
+        'free' => '#DDA0DD',
+        'sleep' => '#B0C4DE',
+        'break' => '#F0E68C',
+        'university' => '#FFA07A',
+        'church' => '#E6E6FA'
+    ];
+    return $colors[$type] ?? '#E91E63';
+}
+
+function checkIfWasJustMessaged($db, $user_id) {
     $stmt = $db->prepare("
-        SELECT last_status, last_status_time 
-        FROM misuki_status 
-        WHERE user_id = ?
+        SELECT timestamp FROM conversations 
+        WHERE user_id = ? 
+        ORDER BY timestamp DESC 
+        LIMIT 1
     ");
     $stmt->execute([$user_id]);
-    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    $last_message = $stmt->fetch(PDO::FETCH_ASSOC);
     
-    if (!$result) {
-        return false;
-    }
-    
-    // If last status was sleeping and it's been less than 30 seconds, she was just woken
-    if ($result['last_status'] === 'sleeping') {
-        $last_time = strtotime($result['last_status_time']);
-        $now = time();
-        if (($now - $last_time) < 30) {
-            return true;
-        }
+    if ($last_message) {
+        $time_diff = time() - strtotime($last_message['timestamp']);
+        return $time_diff < 300; // Within 5 minutes
     }
     
     return false;
-}
-
-function determineStatus($time_decimal, $day_of_week, $was_sleeping) {
-    $is_weekday = !in_array($day_of_week, ['Saturday', 'Sunday']);
-    
-    // Sleep schedule: 11 PM - 6:30 AM (23:00 - 6:30)
-    if ($time_decimal >= 23 || $time_decimal < 6.5) {
-        return [
-            'status' => 'sleeping',
-            'emoji' => '😴',
-            'text' => 'Sleeping',
-            'detail' => 'Asleep in Saitama',
-            'color' => '#9B59B6',
-            'was_woken' => $was_sleeping
-        ];
-    }
-    
-    // Morning routine: 6:30 AM - 8:00 AM
-    if ($time_decimal >= 6.5 && $time_decimal < 8) {
-        return [
-            'status' => 'morning_routine',
-            'emoji' => '🌅',
-            'text' => 'Getting Ready',
-            'detail' => 'Morning routine',
-            'color' => '#F39C12',
-            'was_woken' => false
-        ];
-    }
-    
-    // School time (weekdays): 8:00 AM - 3:30 PM
-    if ($is_weekday && $time_decimal >= 8 && $time_decimal < 15.5) {
-        // Check specific periods
-        if ($time_decimal >= 8 && $time_decimal < 9) {
-            return [
-                'status' => 'school',
-                'emoji' => '🎒',
-                'text' => 'At School',
-                'detail' => 'Morning homeroom',
-                'color' => '#3498DB',
-                'was_woken' => false
-            ];
-        } elseif ($time_decimal >= 12 && $time_decimal < 13) {
-            return [
-                'status' => 'school',
-                'emoji' => '🍱',
-                'text' => 'Lunch Break',
-                'detail' => 'Having lunch at school',
-                'color' => '#E67E22',
-                'was_woken' => false
-            ];
-        } else {
-            // Check if chemistry class time (varies, but let's say certain days)
-            $is_chemistry_time = in_array($day_of_week, ['Monday', 'Wednesday', 'Friday']) && 
-                                 $time_decimal >= 10 && $time_decimal < 11.5;
-            
-            if ($is_chemistry_time) {
-                return [
-                    'status' => 'school',
-                    'emoji' => '⚗️',
-                    'text' => 'Chemistry Class',
-                    'detail' => 'In chemistry class!',
-                    'color' => '#27AE60',
-                    'was_woken' => false
-                ];
-            }
-            
-            return [
-                'status' => 'school',
-                'emoji' => '📚',
-                'text' => 'In Class',
-                'detail' => 'Attending classes',
-                'color' => '#3498DB',
-                'was_woken' => false
-            ];
-        }
-    }
-    
-    // After school: 3:30 PM - 5:00 PM
-    if ($is_weekday && $time_decimal >= 15.5 && $time_decimal < 17) {
-        return [
-            'status' => 'after_school',
-            'emoji' => '🏃‍♀️',
-            'text' => 'Heading Home',
-            'detail' => 'Going home from school',
-            'color' => '#E74C3C',
-            'was_woken' => false
-        ];
-    }
-    
-    // Friday evening: Dad visit time
-    if ($day_of_week === 'Friday' && $time_decimal >= 17 && $time_decimal < 21) {
-        return [
-            'status' => 'visiting_dad',
-            'emoji' => '👨‍👩‍👧',
-            'text' => 'Visiting Family',
-            'detail' => 'At dad and step-mom\'s place',
-            'color' => '#9B59B6',
-            'was_woken' => false
-        ];
-    }
-    
-    // Evening: 5:00 PM - 8:00 PM
-    if ($time_decimal >= 17 && $time_decimal < 20) {
-        return [
-            'status' => 'evening',
-            'emoji' => '🌆',
-            'text' => 'Evening',
-            'detail' => 'Relaxing at home',
-            'color' => '#E67E22',
-            'was_woken' => false
-        ];
-    }
-    
-    // Dinner time: 6:30 PM - 7:30 PM
-    if ($time_decimal >= 18.5 && $time_decimal < 19.5) {
-        return [
-            'status' => 'dinner',
-            'emoji' => '🍽️',
-            'text' => 'Dinner Time',
-            'detail' => 'Having dinner with mom',
-            'color' => '#E74C3C',
-            'was_woken' => false
-        ];
-    }
-    
-    // Study/homework time: 8:00 PM - 10:00 PM
-    if ($time_decimal >= 20 && $time_decimal < 22) {
-        return [
-            'status' => 'studying',
-            'emoji' => '📖',
-            'text' => 'Studying',
-            'detail' => 'Doing homework',
-            'color' => '#3498DB',
-            'was_woken' => false
-        ];
-    }
-    
-    // Late evening/pre-bed: 10:00 PM - 11:00 PM
-    if ($time_decimal >= 22 && $time_decimal < 23) {
-        return [
-            'status' => 'winding_down',
-            'emoji' => '🌙',
-            'text' => 'Winding Down',
-            'detail' => 'Getting ready for bed',
-            'color' => '#9B59B6',
-            'was_woken' => false
-        ];
-    }
-    
-    // Weekend daytime
-    if (!$is_weekday && $time_decimal >= 8 && $time_decimal < 17) {
-        return [
-            'status' => 'free_time',
-            'emoji' => '✨',
-            'text' => 'Free Time',
-            'detail' => 'Relaxing on weekend',
-            'color' => '#1ABC9C',
-            'was_woken' => false
-        ];
-    }
-    
-    // Default: Free/available
-    return [
-        'status' => 'available',
-        'emoji' => '💕',
-        'text' => 'Available',
-        'detail' => 'Free to chat',
-        'color' => '#E91E63',
-        'was_woken' => false
-    ];
 }
 
 function updateMisukiStatus($db, $user_id, $status) {
@@ -261,7 +102,7 @@ function generateWokenUpContext($status) {
     $context .= "React naturally:\n";
     $context .= "- Be slightly groggy/sleepy at first\n";
     $context .= "- Maybe mention you were sleeping\n";
-    $context .= "- Could be cute: 'Mm... Dan? *rubs eyes* You woke me up... 😴'\n";
+    $context .= "- Could be cute: 'Mm... Dan? You woke me up... 😴'\n";
     $context .= "- Or caring: 'Is everything okay? It's so late there...'\n";
     $context .= "- Don't be mad - you're happy to hear from him even if sleepy\n";
     $context .= "- Type a bit slower (sleepy)\n";
@@ -270,6 +111,8 @@ function generateWokenUpContext($status) {
     return $context;
 }
 
+// Note: generateActivityContext is now handled by the detailed schedule in chat.php
+// This function is kept for backwards compatibility but may not be used
 function generateActivityContext($status) {
     $context = "\n\n=== 📍 YOUR CURRENT ACTIVITY ===\n";
     $context .= "Status: {$status['emoji']} {$status['text']}\n";
@@ -277,8 +120,9 @@ function generateActivityContext($status) {
     
     // Add specific context based on status
     switch ($status['status']) {
+        case 'class':
         case 'school':
-            $context .= "You're at school right now. You might:\n";
+            $context .= "You're at school/university right now. You might:\n";
             $context .= "- Reply quickly if it's break time\n";
             $context .= "- Be brief if in class\n";
             $context .= "- Mention what you're doing if chemistry class\n";
@@ -291,20 +135,22 @@ function generateActivityContext($status) {
             $context .= "- Share if you're struggling with something\n";
             break;
             
-        case 'visiting_dad':
-            $context .= "You're at your dad and step-mom's place (Friday visit).\n";
-            $context .= "- You can mention you're there\n";
-            $context .= "- Share how the visit is going\n";
+        case 'church':
+            $context .= "You're at church (Sunday morning).\n";
+            $context .= "- You might mention the service\n";
+            $context .= "- Share thoughts about it\n";
             break;
             
-        case 'dinner':
-            $context .= "You're having dinner with your mom.\n";
-            $context .= "- Might mention what you're eating\n";
-            $context .= "- Mom might be nearby\n";
+        case 'personal':
+            if (stripos($status['text'], 'dinner') !== false) {
+                $context .= "You're having dinner with your mom.\n";
+                $context .= "- Might mention what you're eating\n";
+                $context .= "- Mom might be nearby\n";
+            }
             break;
             
-        case 'winding_down':
-            $context .= "You're getting ready for bed soon.\n";
+        case 'sleep':
+            $context .= "You're sleeping or getting ready for bed.\n";
             $context .= "- Might be in pajamas\n";
             $context .= "- Getting sleepy\n";
             break;
