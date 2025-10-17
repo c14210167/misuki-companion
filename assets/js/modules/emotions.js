@@ -42,6 +42,11 @@ const moodImages = {
     dreamy: 'assets/images/misuki-dreamy.png'
 };
 
+// 🔧 MISSING FUNCTION - THIS IS WHAT WAS CAUSING THE ERROR!
+export function getEmotionImage(emotion) {
+    return moodImages[emotion] || 'assets/images/misuki-neutral.png';
+}
+
 // Update Misuki's mood (image + text)
 export function updateMisukiMood(emotion, moodText) {
     const moodDisplay = document.querySelector('.misuki-mood-text');
@@ -71,6 +76,7 @@ export function updateMisukiMood(emotion, moodText) {
         misukiImage.alt = emotion;
     }
 }
+
 // Get emotion display text
 export function getEmotionText(emotion) {
     const emotionTexts = {
@@ -90,7 +96,8 @@ export function getEmotionText(emotion) {
         confused: 'Confused',
         flustered: 'Flustered',
         amazed: 'Amazed!',
-        teasing: 'Teasing~',
+        curious: 'Curious',
+        teasing: 'Teasing',
         playful: 'Playful',
         giggling: 'Giggling',
         confident: 'Confident',
@@ -100,91 +107,52 @@ export function getEmotionText(emotion) {
         comforting: 'Comforting',
         affectionate: 'Affectionate',
         reassuring: 'Reassuring',
-        gentle: 'Gentle',
+        gentle: 'Being gentle',
         thoughtful: 'Thinking',
-        curious: 'Curious',
         sleepy: 'Sleepy',
         pouty: 'Pouty',
         relieved: 'Relieved',
         dreamy: 'Dreaming'
     };
-    
     return emotionTexts[emotion] || 'Listening';
 }
 
-// Helper: Count words in string
-function str_word_count(str) {
-    return str.split(/\s+/).filter(word => word.length > 0).length;
-}
-
-// ANTI-FLICKER: Animate emotion timeline
-export function animateEmotionTimeline(emotion_timeline) {
-    if (!emotion_timeline || emotion_timeline.length === 0) return;
+// Animate emotions over time (like Undertale)
+export function animateEmotions(emotion_timeline) {
+    if (!emotion_timeline || emotion_timeline.length === 0) {
+        console.log('⚠️ No emotion timeline');
+        return;
+    }
     
-    const MIN_EMOTION_DISPLAY_TIME = 2500; // Minimum 2.5 seconds
+    console.log(`😊 Animating ${emotion_timeline.length} emotions`);
     
-    // STEP 1: Merge consecutive identical emotions
-    const merged = [];
-    let current = null;
-    
+    // STEP 1: Calculate total words in the message
+    let total_words = 0;
     for (let i = 0; i < emotion_timeline.length; i++) {
-        if (!current) {
-            current = { ...emotion_timeline[i] };
-        } else if (current.emotion === emotion_timeline[i].emotion) {
-            current.duration += emotion_timeline[i].duration;
-            current.sentence += ' ' + emotion_timeline[i].sentence;
-        } else {
-            merged.push(current);
-            current = { ...emotion_timeline[i] };
-        }
+        total_words += emotion_timeline[i].word_count;
     }
-    if (current) merged.push(current);
     
-    console.log(`🔗 Merged ${emotion_timeline.length} → ${merged.length} emotions`);
+    console.log(`📝 Total words: ${total_words}`);
     
-    // STEP 2: Filter out very short emotions
+    // STEP 2: Filter out very short emotions (less than 5% of message)
     const filtered = [];
-    
-    for (let i = 0; i < merged.length; i++) {
-        const durationMs = merged[i].duration * 1000;
+    for (let i = 0; i < emotion_timeline.length; i++) {
+        const percentage = (emotion_timeline[i].word_count / total_words) * 100;
         
-        if (durationMs >= MIN_EMOTION_DISPLAY_TIME) {
-            filtered.push(merged[i]);
+        if (percentage >= 5) {
+            filtered.push(emotion_timeline[i]);
         } else {
-            const half_time = merged[i].duration / 2;
-            
-            if (filtered.length > 0) {
-                filtered[filtered.length - 1].duration += half_time;
-            }
-            
-            if (i + 1 < merged.length) {
-                merged[i + 1].duration += half_time;
-            } else if (filtered.length > 0) {
-                filtered[filtered.length - 1].duration += merged[i].duration;
-            }
-            
-            console.log(`⏭️ Skipped short emotion: ${merged[i].emotion} (${durationMs}ms)`);
+            console.log(`⏭️ Skipping ${emotion_timeline[i].emotion} (${percentage.toFixed(1)}% - too short)`);
         }
     }
     
-    // STEP 3: Short messages = single emotion
-    const total_words = emotion_timeline.reduce((sum, e) => sum + str_word_count(e.sentence), 0);
-    
-    if (total_words < 10 && filtered.length > 1) {
-        const emotion_priority = {
-            'shocked': 10, 'surprised': 9, 'excited': 9,
-            'sad': 8, 'upset': 8, 'concerned': 8,
-            'loving': 7, 'affectionate': 7,
-            'happy': 6, 'playful': 6,
-            'thoughtful': 5, 'curious': 5,
-            'gentle': 3, 'neutral': 1
-        };
-        
+    // STEP 3: If message is very short (under 15 words), just use the longest/most important emotion
+    if (total_words < 15) {
         let best = filtered[0];
-        let best_score = (filtered[0].duration * 1000) + (emotion_priority[filtered[0].emotion] || 0) * 100;
+        let best_score = 0;
         
-        for (let i = 1; i < filtered.length; i++) {
-            const score = (filtered[i].duration * 1000) + (emotion_priority[filtered[i].emotion] || 0) * 100;
+        for (let i = 0; i < filtered.length; i++) {
+            const score = filtered[i].word_count * 100;
             if (score > best_score) {
                 best = filtered[i];
                 best_score = score;

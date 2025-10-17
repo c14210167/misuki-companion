@@ -12,7 +12,7 @@ require_once '../config/database.php';
 
 $input = json_decode(file_get_contents('php://input'), true);
 $user_id = $input['user_id'] ?? 1;
-$limit = $input['limit'] ?? 200; // Get last 200 messages
+$limit = $input['limit'] ?? 25; // 🔧 CHANGED DEFAULT FROM 200 TO 25
 
 try {
     $db = getDBConnection();
@@ -37,7 +37,7 @@ try {
     $conversations = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
     // Debug logging
-    error_log("get_history.php: Total in DB=" . $total_count . ", Returned=" . count($conversations) . ", user_id=" . $user_id);
+    error_log("get_history.php: Total in DB=" . $total_count . ", Returned=" . count($conversations) . ", user_id=" . $user_id . ", limit=" . $limit);
     
     if (!empty($conversations)) {
         $first_msg = $conversations[0];

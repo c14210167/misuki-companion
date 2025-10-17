@@ -26,7 +26,7 @@ export async function loadChatHistory() {
             },
             body: JSON.stringify({
                 user_id: 1,
-                limit: 200
+                limit: 25  // 🔧 CHANGED FROM 200 TO 25
             }),
             cache: 'no-store'
         });

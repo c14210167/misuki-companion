@@ -1,5 +1,5 @@
 // =========================================
-// MESSAGING MODULE
+// MESSAGING MODULE (BULLETPROOF VERSION)
 // Handles sending messages, typing, and display
 // =========================================
 window.isPrivateMode = false;
@@ -15,16 +15,13 @@ import { createSparkle } from './effects.js';
 
 // Initialize messaging system
 export function initializeMessaging() {
-    // Handle Enter key
     messageInput.addEventListener('keydown', handleKeyPress);
     
-    // Auto-resize textarea
     messageInput.addEventListener('input', function() {
         this.style.height = 'auto';
         this.style.height = Math.min(this.scrollHeight, 120) + 'px';
     });
     
-    // Track typing
     messageInput.addEventListener('input', () => {
         window.userIsTyping = messageInput.value.trim().length > 0;
     });
@@ -40,7 +37,6 @@ export function initializeMessaging() {
     });
 }
 
-// Handle Enter key press
 function handleKeyPress(event) {
     if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
@@ -48,7 +44,6 @@ function handleKeyPress(event) {
     }
 }
 
-// Get time of day
 function getTimeOfDay() {
     const hour = new Date().getHours();
     if (hour >= 5 && hour < 12) return 'morning';
@@ -57,7 +52,6 @@ function getTimeOfDay() {
     return 'night';
 }
 
-// Detect time confusion
 function detectTimeConfusion(message, timeOfDay) {
     const messageLower = message.toLowerCase();
     
@@ -92,27 +86,20 @@ function detectTimeConfusion(message, timeOfDay) {
     return false;
 }
 
-// Calculate typing duration for a message
 function calculateTypingDuration(text, emotionTimeline) {
-    // Base calculation: character count × average typing speed
     const charCount = text.length;
-    const avgSpeed = 60; // Increased from 50ms to 60ms per character
+    const avgSpeed = 60;
     
-    // Add pause times for punctuation
-    const punctuationPauses = (text.match(/[.!?]/g) || []).length * 500; // Increased from 400
-    const commaPauses = (text.match(/[,;]/g) || []).length * 250; // Increased from 200
+    const punctuationPauses = (text.match(/[.!?]/g) || []).length * 500;
+    const commaPauses = (text.match(/[,;]/g) || []).length * 250;
     
-    // If there's an emotion timeline, add time for emotion transitions
     let emotionPauses = 0;
     if (emotionTimeline && emotionTimeline.length > 1) {
-        emotionPauses = (emotionTimeline.length - 1) * 300; // 300ms per emotion change
+        emotionPauses = (emotionTimeline.length - 1) * 300;
     }
     
-    // Total duration
     const baseDuration = (charCount * avgSpeed) + punctuationPauses + commaPauses + emotionPauses;
-    
-    // Add a larger buffer for safety
-    return baseDuration + 1000; // Increased from 500ms to 1000ms
+    return baseDuration + 1000;
 }
 
 // Send message
@@ -120,14 +107,11 @@ export async function sendMessage() {
     const message = messageInput.value.trim();
     if (!message && !window.attachedFile) return;
 
-    // 🆕 CANCEL ANY PENDING SPLIT MESSAGES
     if (window.cancelSplitMessages) {
         window.cancelSplitMessages();
     }
 
-    // Update last user message time
     window.lastUserMessageTime = Date.now();
-    console.log('📤 User sent message at', new Date(window.lastUserMessageTime).toLocaleTimeString());
 
     const timeOfDay = getTimeOfDay();
     const timeConfused = detectTimeConfusion(message, timeOfDay);
@@ -170,21 +154,24 @@ export async function sendMessage() {
         });
 
         const data = await response.json();
-        // Check if private mode changed
+        console.log('🔍 FULL RESPONSE:', JSON.stringify(data, null, 2));
+        
         if (data.private_mode !== undefined) {
             window.isPrivateMode = data.private_mode;
-            console.log('Private mode:', window.isPrivateMode ? 'ACTIVE 🔒' : 'INACTIVE');
         }
         
-        // Check if message is split
         if (data.is_split && data.additional_messages) {
-            // She's sending multiple messages!
             handleSplitMessages(data);
         } else {
-            // Normal single message
             setTimeout(() => {
                 typingIndicator.classList.remove('active');
-                addMessage('misuki', data.response, data.emotion_timeline);
+                
+                // 🛡️ BULLETPROOF CHECK
+                const responseText = data.response || data.message || '[No response]';
+                console.log('📝 RESPONSE TEXT:', responseText);
+                console.log('😊 EMOTION TIMELINE:', data.emotion_timeline);
+                
+                addMessage('misuki', responseText, data.emotion_timeline);
                 updateMisukiMood(data.mood, data.mood_text);
                 
                 if (data.should_follow_up) {
@@ -194,104 +181,67 @@ export async function sendMessage() {
         }
 
     } catch (error) {
-        console.error('Error:', error);
+        console.error('❌ ERROR:', error);
         typingIndicator.classList.remove('active');
-        addMessage('misuki', "Oh no... I'm having trouble thinking right now. Could you try again? 💭");
-        updateMisukiMood('concerned', 'Worried');
+        addMessage('misuki', "Oh no... I'm having trouble thinking right now. Could you try again?");
     }
 }
 
-// Handle split messages with realistic timing - NOW PAUSES WHEN USER IS TYPING
-function handleSplitMessages(data) {
+async function handleSplitMessages(data) {
     const allMessages = [data.response, ...data.additional_messages];
-    const emotionTimelines = data.emotion_timelines || [];
+    const allTimelines = data.emotion_timelines;
     
-    let currentIndex = 0;
+    console.log(`💬 Split: ${allMessages.length} messages`);
+    
+    let currentPart = 0;
     let nextMessageTimeout = null;
     
     function sendNextPart() {
-        if (currentIndex >= allMessages.length) {
-            // All messages sent
-            typingIndicator.classList.remove('active');
-            
-            // Check for follow-up after all messages are done
-            if (data.should_follow_up) {
-                scheduleFollowUp(0);
-            }
-            return;
+        if (currentPart >= allMessages.length) return;
+        
+        const message = allMessages[currentPart];
+        const timeline = allTimelines[currentPart];
+        
+        typingIndicator.classList.remove('active');
+        addMessage('misuki', message, timeline);
+        
+        if (currentPart === 0) {
+            updateMisukiMood(data.mood, data.mood_text);
         }
         
-        const currentMessage = allMessages[currentIndex];
-        const currentEmotions = emotionTimelines[currentIndex] || null;
+        currentPart++;
         
-        // Show typing indicator
-        typingIndicator.classList.add('active');
-        
-        // Calculate how long the typing indicator should show
-        const wordCount = currentMessage.split(' ').length;
-        const typingIndicatorDelay = 800 + (wordCount * 150) + (Math.random() * 500);
-        
-        setTimeout(() => {
-            // Hide typing indicator and add message
-            typingIndicator.classList.remove('active');
-            addMessage('misuki', currentMessage, currentEmotions);
+        if (currentPart < allMessages.length) {
+            const typingDuration = calculateTypingDuration(message, timeline);
+            const pauseBetween = 800 + Math.random() * 1200;
+            const totalDelay = typingDuration + pauseBetween;
             
-            // Update mood based on first message
-            if (currentIndex === 0) {
-                updateMisukiMood(data.mood, data.mood_text);
-            }
-            
-            // Calculate how long THIS message will take to type out
-            const messageTypingDuration = calculateTypingDuration(currentMessage, currentEmotions);
-            
-            currentIndex++;
-            
-            // Schedule next message AFTER this one finishes typing
-            if (currentIndex < allMessages.length) {
-                // Wait for current message to finish typing + a brief natural pause
-                const pauseBeforeNext = messageTypingDuration + 600 + (Math.random() * 400);
-                
-                // 🆕 STORE THE TIMEOUT SO WE CAN CHECK IT
-                nextMessageTimeout = setTimeout(() => {
-                    // 🆕 CHECK IF USER IS CURRENTLY TYPING
-                    checkAndSendNext();
-                }, pauseBeforeNext);
-            }
-        }, typingIndicatorDelay);
-    }
-    
-    // 🆕 NEW FUNCTION: Check if user is typing before sending next message
-    function checkAndSendNext() {
-        const isUserTyping = messageInput.value.trim().length > 0;
-        
-        if (isUserTyping) {
-            console.log('⏸️ User is typing - pausing Misuki\'s next message');
-            
-            // Wait a bit and check again
             nextMessageTimeout = setTimeout(() => {
-                checkAndSendNext();
-            }, 1000); // Check every second
-        } else {
-            // User stopped typing, send next message
-            console.log('▶️ User stopped typing - sending next message');
-            sendNextPart();
+                if (window.userIsTyping) {
+                    nextMessageTimeout = setTimeout(() => {
+                        if (window.userIsTyping) {
+                            nextMessageTimeout = setTimeout(sendNextPart, 3000);
+                        } else {
+                            sendNextPart();
+                        }
+                    }, 2000);
+                } else {
+                    sendNextPart();
+                }
+            }, totalDelay);
         }
     }
     
-    // Start the sequence
     sendNextPart();
     
-    // 🆕 EXPOSE CANCEL FUNCTION globally so we can stop if user sends a new message
     window.cancelSplitMessages = function() {
         if (nextMessageTimeout) {
             clearTimeout(nextMessageTimeout);
             nextMessageTimeout = null;
-            console.log('❌ Split messages cancelled - user sent a new message');
         }
     };
 }
 
-// Add date separator
 export function addDateSeparator(dateStr) {
     const separator = document.createElement('div');
     separator.className = 'date-separator';
@@ -299,8 +249,22 @@ export function addDateSeparator(dateStr) {
     chatMessages.appendChild(separator);
 }
 
-// Add message (animated)
+// 🛡️ BULLETPROOF ADD MESSAGE FUNCTION
 export function addMessage(sender, text, emotion_timeline = null) {
+    console.log(`\n=== ADD MESSAGE START ===`);
+    console.log(`Sender: ${sender}`);
+    console.log(`Text: "${text}"`);
+    console.log(`Text type: ${typeof text}`);
+    console.log(`Text length: ${text?.length || 0}`);
+    console.log(`Has emotion timeline: ${!!emotion_timeline}`);
+    console.log(`Emotion timeline:`, emotion_timeline);
+    
+    // 🚨 CRITICAL: Ensure text is valid
+    if (!text || typeof text !== 'string' || text.trim() === '') {
+        console.error('❌ CRITICAL ERROR: Invalid text!');
+        text = '[Error: Empty message]';
+    }
+    
     const now = new Date();
     const dateStr = now.toLocaleDateString('en-US', { 
         year: 'numeric', 
@@ -329,12 +293,14 @@ export function addMessage(sender, text, emotion_timeline = null) {
     messageDiv.innerHTML = `
         <div>
             <div class="message-sender">${sender === 'user' ? 'You' : 'Misuki'}</div>
-            <div class="message-bubble" id="${bubbleId}"></div>
+            <div class="message-bubble" id="${bubbleId}">${sender === 'user' ? text : ''}</div>
             <div class="message-time">${timeStr}</div>
         </div>
     `;
     chatMessages.appendChild(messageDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
+    
+    console.log(`✅ Message div created with bubble ID: ${bubbleId}`);
     
     setTimeout(() => {
         messageDiv.style.transition = 'all 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55)';
@@ -342,21 +308,52 @@ export function addMessage(sender, text, emotion_timeline = null) {
         messageDiv.style.transform = 'translateX(0)';
     }, 10);
     
-    if (sender === 'misuki' && emotion_timeline) {
-        typeMessageWithEmotions(bubbleId, text, emotion_timeline);
-    } else if (sender === 'misuki') {
-        document.getElementById(bubbleId).textContent = text;
-    } else {
-        document.getElementById(bubbleId).textContent = text;
-    }
-    
+    // 🛡️ ONLY FOR MISUKI'S MESSAGES
     if (sender === 'misuki') {
+        const bubble = document.getElementById(bubbleId);
+        
+        if (!bubble) {
+            console.error(`❌ CRITICAL: Bubble ${bubbleId} not found!`);
+            return;
+        }
+        
+        console.log(`📍 Bubble element found:`, bubble);
+        
+        // Check if we should use typing animation
+        const shouldType = emotion_timeline && Array.isArray(emotion_timeline) && emotion_timeline.length > 0;
+        console.log(`Should use typing animation: ${shouldType}`);
+        
+        if (shouldType) {
+            console.log(`✨ Starting typeMessageWithEmotions...`);
+            typeMessageWithEmotions(bubbleId, text, emotion_timeline);
+        } else {
+            console.log(`📝 Setting text directly...`);
+            bubble.textContent = text;
+            console.log(`✅ Text set. Bubble content: "${bubble.textContent}"`);
+        }
+        
+        // 🛡️ SAFETY CHECK: Verify text was added after 200ms
+        setTimeout(() => {
+            const verifyBubble = document.getElementById(bubbleId);
+            if (verifyBubble) {
+                console.log(`🔍 VERIFICATION: Bubble content is "${verifyBubble.textContent}"`);
+                if (!verifyBubble.textContent || verifyBubble.textContent.trim() === '') {
+                    console.error(`❌ EMERGENCY: Bubble is empty! Forcing text...`);
+                    verifyBubble.textContent = text;
+                    console.log(`🚨 FORCED TEXT. New content: "${verifyBubble.textContent}"`);
+                }
+            } else {
+                console.error(`❌ CRITICAL: Bubble disappeared!`);
+            }
+        }, 200);
+        
         const rect = messageDiv.getBoundingClientRect();
         createSparkle(rect.left + 50, rect.top + 20);
     }
+    
+    console.log(`=== ADD MESSAGE END ===\n`);
 }
 
-// Add message instantly (for history)
 export function addMessageInstant(sender, text, timestamp) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${sender}`;
@@ -378,15 +375,11 @@ export function addMessageInstant(sender, text, timestamp) {
     chatMessages.appendChild(messageDiv);
 }
 
-// Schedule follow-up messages
 async function scheduleFollowUp(followUpCount) {
     const delay = 2000 + Math.random() * 3000;
     
     window.followUpTimeout = setTimeout(async () => {
-        if (window.userIsTyping) {
-            console.log('User is typing, canceling follow-up');
-            return;
-        }
+        if (window.userIsTyping) return;
         
         typingIndicator.classList.add('active');
         
@@ -408,10 +401,7 @@ async function scheduleFollowUp(followUpCount) {
                 typingIndicator.classList.remove('active');
                 
                 if (data.success) {
-                    if (window.userIsTyping) {
-                        console.log('User started typing, not sending follow-up');
-                        return;
-                    }
+                    if (window.userIsTyping) return;
                     
                     addMessage('misuki', data.message, data.emotion_timeline);
                     updateMisukiMood(data.mood, data.mood_text);
@@ -429,5 +419,4 @@ async function scheduleFollowUp(followUpCount) {
     }, delay);
 }
 
-// Make sendMessage globally available
 window.sendMessage = sendMessage;
