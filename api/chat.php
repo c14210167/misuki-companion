@@ -28,6 +28,7 @@ $time_of_day = $input['time_of_day'] ?? 'day';
 $time_confused = $input['time_confused'] ?? false;
 $file_content = $input['file_content'] ?? null;
 $filename = $input['filename'] ?? null;
+$user_interrupted = $input['user_interrupted'] ?? false;  // ✨ NEW
 
 date_default_timezone_set('Asia/Jakarta');
 
@@ -264,7 +265,17 @@ try {
     
     $personality_prompt = getMisukiPersonalityPrompt();
     $full_prompt = $personality_prompt . "\n\n" . $context;
-    
+    // Add interruption context if user was typing
+    if ($user_interrupted) {
+        $full_prompt .= "\n\n=== 🔔 NOTICE ===\n";
+        $full_prompt .= "Dan started typing while you were about to send another message.\n";
+        $full_prompt .= "This shows he's engaged! You can:\n";
+        $full_prompt .= "- Acknowledge it playfully (\"oh! you beat me to it ^^\" or \"hehe was just about to say...\")\n";
+        $full_prompt .= "- Just respond normally (he might not have noticed)\n";
+        $full_prompt .= "- Be curious (\"you seem excited to tell me something!\")\n";
+        $full_prompt .= "It's YOUR choice - be natural about it.\n\n";
+    }
+
     // STEP 10: Call Claude API
     $api_key = getenv('ANTHROPIC_API_KEY');
     
@@ -398,7 +409,7 @@ try {
         exit;
     }
 
-    
+
     if (shouldSaveMemory($message_analysis)) {
         saveMemory($db, $user_id, $user_message, $response_text, $message_analysis);
     }

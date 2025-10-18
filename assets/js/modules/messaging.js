@@ -109,6 +109,9 @@ export async function sendMessage() {
 
     if (window.cancelSplitMessages) {
         window.cancelSplitMessages();
+        // Check if user sent a message while Misuki was about to send split messages
+        const userInterrupted = window.userIsTyping || window.userWasTypingDuringSplit;
+        window.userWasTypingDuringSplit = false; // Reset flag
     }
 
     window.lastUserMessageTime = Date.now();
@@ -136,7 +139,8 @@ export async function sendMessage() {
             message: message || 'Here\'s the file!',
             user_id: 1,
             time_of_day: timeOfDay,
-            time_confused: timeConfused
+            time_confused: timeConfused,
+            user_interrupted: userInterrupted  // ✨ NEW
         };
         
         if (window.attachedFile) {
@@ -195,6 +199,7 @@ async function handleSplitMessages(data) {
     
     let currentPart = 0;
     let nextMessageTimeout = null;
+    let userStartedTyping = false;  // Track if user typed during split
     
     function sendNextPart() {
         if (currentPart >= allMessages.length) return;
@@ -202,34 +207,64 @@ async function handleSplitMessages(data) {
         const message = allMessages[currentPart];
         const timeline = allTimelines[currentPart];
         
-        typingIndicator.classList.remove('active');
-        addMessage('misuki', message, timeline);
-        
-        if (currentPart === 0) {
-            updateMisukiMood(data.mood, data.mood_text);
+        // ✨ Show typing indicator BEFORE 2nd, 3rd, etc. messages
+        if (currentPart > 0) {
+            typingIndicator.classList.add('active');
         }
         
-        currentPart++;
-        
-        if (currentPart < allMessages.length) {
-            const typingDuration = calculateTypingDuration(message, timeline);
-            const pauseBetween = 800 + Math.random() * 1200;
-            const totalDelay = typingDuration + pauseBetween;
+        setTimeout(() => {
+            typingIndicator.classList.remove('active');
+            addMessage('misuki', message, timeline);
             
-            nextMessageTimeout = setTimeout(() => {
-                if (window.userIsTyping) {
-                    nextMessageTimeout = setTimeout(() => {
+            if (currentPart === 0) {
+                updateMisukiMood(data.mood, data.mood_text);
+            }
+            
+            currentPart++;
+            
+            if (currentPart < allMessages.length) {
+                const typingDuration = calculateTypingDuration(message, timeline);
+                const pauseBetween = 800 + Math.random() * 1200;
+                const totalDelay = typingDuration + pauseBetween;
+                
+                nextMessageTimeout = setTimeout(() => {
+                    // ✨ WAIT 5 SECONDS, then check if user is typing
+                    setTimeout(() => {
                         if (window.userIsTyping) {
-                            nextMessageTimeout = setTimeout(sendNextPart, 3000);
+                            console.log('⏸️ User is typing, waiting up to 20 seconds...');
+                            userStartedTyping = true;
+                            
+                            const startWaitTime = Date.now();
+                            const maxWait = 20000; // 20 seconds
+                            
+                            // Check every second if user stopped typing
+                            const checkInterval = setInterval(() => {
+                                const waitedTime = Date.now() - startWaitTime;
+                                
+                                if (!window.userIsTyping) {
+                                    // User stopped typing
+                                    console.log('▶️ User stopped typing, continuing...');
+                                    clearInterval(checkInterval);
+                                    sendNextPart();
+                                } else if (waitedTime >= maxWait) {
+                                    // 20 seconds passed, send anyway
+                                    console.log('⏱️ 20 seconds passed, sending anyway (user was typing)');
+                                    clearInterval(checkInterval);
+                                    // Mark that we should notify backend
+                                    window.userWasTypingDuringSplit = true;
+                                    sendNextPart();
+                                }
+                            }, 1000); // Check every 1 second
+                            
                         } else {
+                            // User not typing, send immediately
                             sendNextPart();
                         }
-                    }, 2000);
-                } else {
-                    sendNextPart();
-                }
-            }, totalDelay);
-        }
+                    }, 5000); // Wait 5 seconds before checking
+                    
+                }, totalDelay);
+            }
+        }, currentPart > 0 ? 1500 : 0); // 1.5s typing indicator for 2nd+ messages
     }
     
     sendNextPart();
