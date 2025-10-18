@@ -303,4 +303,130 @@ function getEmotionImage($emotion) {
     return $emotion_images[$emotion] ?? 'misuki-neutral.png';
 }
 
+// Add this function to api/parse_emotions.php
+
+/**
+ * Analyze the user's message for emotional content
+ * Returns analysis with dominant emotion
+ */
+function analyzeEmotions($message) {
+    $message_lower = strtolower($message);
+    
+    // Initialize analysis
+    $analysis = [
+        'original_message' => $message,
+        'dominant_emotion' => 'neutral',
+        'intensity' => 5,
+        'length' => strlen($message)
+    ];
+    
+    // Detect emotions based on keywords and patterns
+    $emotions = [];
+    
+    // Happy/Excited
+    if (preg_match('/\b(happy|glad|excited|yay|awesome|amazing|great|wonderful)\b/i', $message_lower)) {
+        $emotions['happy'] = 7;
+    }
+    if (preg_match('/\b(love|adore|miss you)\b/i', $message_lower) || substr_count($message, '!') > 2) {
+        $emotions['excited'] = 8;
+    }
+    
+    // Sad/Upset
+    if (preg_match('/\b(sad|depressed|cry|hurt|upset|disappointed)\b/i', $message_lower)) {
+        $emotions['sad'] = 8;
+    }
+    
+    // Anxious/Stressed
+    if (preg_match('/\b(worried|anxious|stress|nervous|scared|afraid)\b/i', $message_lower)) {
+        $emotions['anxious'] = 7;
+    }
+    
+    // Angry
+    if (preg_match('/\b(angry|mad|furious|hate)\b/i', $message_lower)) {
+        $emotions['angry'] = 8;
+    }
+    
+    // Tired/Sleepy
+    if (preg_match('/\b(tired|exhausted|sleepy|drowsy)\b/i', $message_lower)) {
+        $emotions['tired'] = 6;
+    }
+    
+    // Confused
+    if (preg_match('/\?{2,}|\bconfused\b|\bdon\'t understand\b/i', $message_lower)) {
+        $emotions['confused'] = 6;
+    }
+    
+    // If no specific emotion found, check for general sentiment
+    if (empty($emotions)) {
+        if (substr_count($message, '!') > 0) {
+            $emotions['excited'] = 5;
+        } else if (preg_match('/\b(okay|fine|alright)\b/i', $message_lower)) {
+            $emotions['neutral'] = 5;
+        } else {
+            $emotions['neutral'] = 5;
+        }
+    }
+    
+    // Find dominant emotion
+    if (!empty($emotions)) {
+        arsort($emotions);
+        $analysis['dominant_emotion'] = key($emotions);
+        $analysis['intensity'] = current($emotions);
+    }
+    
+    return $analysis;
+}
+
+/**
+ * Generate emotional context text for the AI
+ */
+function generateEmotionalContext($analysis) {
+    if (!isset($analysis['dominant_emotion']) || $analysis['dominant_emotion'] === 'neutral') {
+        return '';
+    }
+    
+    $emotion = $analysis['dominant_emotion'];
+    $intensity = $analysis['intensity'] ?? 5;
+    
+    $context = "\n\n=== EMOTIONAL CONTEXT ===\n";
+    $context .= "Dan's message has a {$emotion} tone";
+    
+    if ($intensity >= 7) {
+        $context .= " (strong intensity)";
+    } else if ($intensity >= 5) {
+        $context .= " (moderate intensity)";
+    } else {
+        $context .= " (mild intensity)";
+    }
+    
+    $context .= ".\n";
+    
+    // Add contextual guidance
+    switch($emotion) {
+        case 'sad':
+        case 'upset':
+            $context .= "Be gentle, supportive, and caring. Show empathy.\n";
+            break;
+        case 'anxious':
+        case 'stressed':
+            $context .= "Be reassuring and comforting. Help him feel better.\n";
+            break;
+        case 'happy':
+        case 'excited':
+            $context .= "Match his positive energy! Be enthusiastic with him.\n";
+            break;
+        case 'angry':
+            $context .= "Be understanding and patient. Don't escalate.\n";
+            break;
+        case 'tired':
+            $context .= "Be gentle and understanding of his tiredness.\n";
+            break;
+        case 'confused':
+            $context .= "Be clear and helpful in explaining things.\n";
+            break;
+    }
+    
+    return $context;
+}
+
 ?>

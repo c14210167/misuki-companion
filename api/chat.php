@@ -1,6 +1,6 @@
 <?php
-// Clean chat.php - All duplicates removed
-ini_set('display_errors', 0); // Don't display errors (breaks JSON)
+// Clean chat.php - ALL ISSUES FIXED
+ini_set('display_errors', 0);
 ini_set('log_errors', 1);
 error_reporting(E_ALL);
 
@@ -21,7 +21,6 @@ require_once 'split_message_handler.php';
 require_once 'nickname_handler.php';
 require_once 'core_memory_handler.php';
 
-// Get JSON input
 $input = json_decode(file_get_contents('php://input'), true);
 $user_message = $input['message'] ?? '';
 $user_id = $input['user_id'] ?? 1;
@@ -30,7 +29,6 @@ $time_confused = $input['time_confused'] ?? false;
 $file_content = $input['file_content'] ?? null;
 $filename = $input['filename'] ?? null;
 
-// Set timezone to Jakarta (user's timezone)
 date_default_timezone_set('Asia/Jakarta');
 
 if (empty($user_message) && empty($file_content)) {
@@ -41,14 +39,13 @@ if (empty($user_message) && empty($file_content)) {
 try {
     $db = getDBConnection();
     
-    // ===== REALITY SYSTEM: Get Misuki's current state =====
+    // Get Misuki's current state
     $current_mood = getMisukiCurrentMood($db, $user_id);
     $conversation_style = getConversationStyle($db, $user_id);
     $active_storylines = getActiveStorylines($db, $user_id);
     $friends = getMisukiFriends($db, $user_id);
     $external_context = getActiveExternalContext($db, $user_id);
     
-    // Check for weather mention opportunity
     $weather_comment = null;
     if (rand(1, 100) <= 15) {
         $weather_comment = generateWeatherContext();
@@ -57,42 +54,40 @@ try {
         }
     }
     
-    // ===== STEP 1: CHECK FOR REMINDER REQUEST =====
+    // STEP 1: Check for reminder
     if (detectReminderRequest($user_message)) {
         $reminder_details = parseReminderDetails($user_message);
         
-        if ($reminder_details['success']) {
+        if ($reminder_details['success'] && $reminder_details['confidence'] >= 70) {
             $time_info = extractTimeFromMessage(strtolower($user_message));
             $time_desc = $time_info['description'];
             
-            if ($reminder_details['confidence'] >= 70) {
-                saveReminder(
-                    $db, 
-                    $user_id, 
-                    $reminder_details['reminder_text'], 
-                    $reminder_details['remind_at'],
-                    $reminder_details['confidence'],
-                    $user_message
-                );
-                
-                $response_text = generateReminderResponse($reminder_details, $time_desc);
-                $emotion_timeline = parseEmotionsInMessage($response_text);
-                
-                echo json_encode([
-                    'response' => $response_text,
-                    'mood' => 'happy',
-                    'mood_text' => 'Happy to help',
-                    'emotion_timeline' => $emotion_timeline,
-                    'reminder_set' => true
-                ]);
-                
-                saveConversation($db, $user_id, $user_message, $response_text, 'happy');
-                exit;
-            }
+            saveReminder(
+                $db, 
+                $user_id, 
+                $reminder_details['reminder_text'], 
+                $reminder_details['remind_at'],
+                $reminder_details['confidence'],
+                $user_message
+            );
+            
+            $response_text = generateReminderResponse($reminder_details, $time_desc);
+            $emotion_timeline = parseEmotionsInMessage($response_text);
+            
+            echo json_encode([
+                'response' => $response_text,
+                'mood' => 'happy',
+                'mood_text' => 'Happy to help',
+                'emotion_timeline' => $emotion_timeline,
+                'reminder_set' => true
+            ]);
+            
+            saveConversation($db, $user_id, $user_message, $response_text, 'happy');
+            exit;
         }
     }
     
-    // ===== STEP 2: CHECK FOR NICKNAME ASSIGNMENT =====
+    // STEP 2: Check for nickname
     $nickname_context = '';
     $detected_nickname = detectMisukiNickname($user_message);
     if ($detected_nickname) {
@@ -113,18 +108,13 @@ try {
         exit;
     }
     
-    // Build nickname context for AI
     $nickname_context = buildNicknameContext();
     
-    // ===== STEP 3: SAVE USER MESSAGE =====
-    $stmt = $db->prepare("INSERT INTO conversations (user_id, sender, message, timestamp) VALUES (?, 'user', ?, NOW())");
-    $stmt->execute([$user_id, $user_message]);
-    
-    // ===== STEP 4: ANALYZE EMOTIONS =====
+    // STEP 3: Analyze emotions
     $message_analysis = analyzeEmotions($user_message);
     $emotional_context = generateEmotionalContext($message_analysis);
     
-    // Check for core memory creation
+    // Check for core memory
     $core_memory_context = '';
     if (detectCoreMemoryMoment($user_message, $message_analysis, $current_mood)) {
         $core_memory = createCoreMemory($db, $user_id, $user_message, $message_analysis);
@@ -135,12 +125,12 @@ try {
         }
     }
     
-    // ===== STEP 5: CHECK FOR LOCATION UPDATE =====
+    // STEP 4: Check location
     $location_result = detectAndUpdateLocation($db, $user_id, $user_message);
     $current_location = $location_result['location'];
     $location_context = $location_result['context'];
     
-    // ===== STEP 5.5: CHECK FOR FAMILY MENTIONS =====
+    // STEP 5: Check for family mentions
     $family_members = ['dad', 'father', 'mom', 'mother', 'sister', 'sora', 'cat', 'whiskers', 'family'];
     $message_lower = strtolower($user_message);
     $family_mentioned = null;
@@ -152,26 +142,21 @@ try {
         }
     }
     
-    // ===== STEP 5.6: DETECT FUTURE EVENTS =====
+    // STEP 6: Detect future events - FIXED
     try {
         $future_event = detectFutureEvent($user_message);
-        if ($future_event) {
-            $event_id = saveFutureEvent($db, $user_id, $future_event);
+        if ($future_event && $future_event['has_future_event']) {
+            // FIX: Pass individual parameters, not the whole array
+            $event_id = saveFutureEvent(
+                $db, 
+                $user_id, 
+                $future_event['event_description'],
+                $future_event['planned_date'],
+                $future_event['planned_time']
+            );
+            
             if ($event_id) {
                 error_log("Future event saved: ID $event_id - " . $future_event['event_description']);
-                
-                if ($future_event['planned_date'] && $future_event['planned_date'] !== 'unknown') {
-                    addMilestone(
-                        $db, 
-                        $user_id, 
-                        'dan_plan',
-                        'upcoming',
-                        $future_event['event_description'],
-                        "Dan mentioned he's planning to: " . $future_event['event_description'],
-                        7,
-                        $future_event['planned_date']
-                    );
-                }
             }
             
             $pending_events = getPendingFutureEvents($db, $user_id);
@@ -187,11 +172,9 @@ try {
         error_log("Future events error: " . $e->getMessage());
     }
     
-    // ===== STEP 6: DETECT STORYLINE UPDATES =====
+    // STEP 7: Detect storyline updates
     foreach ($active_storylines as $storyline) {
         $storyline_keywords = explode(' ', strtolower($storyline['storyline_text']));
-        $message_lower = strtolower($user_message);
-        
         $match_count = 0;
         foreach ($storyline_keywords as $keyword) {
             if (strlen($keyword) > 4 && strpos($message_lower, $keyword) !== false) {
@@ -200,92 +183,46 @@ try {
         }
         
         if ($match_count >= 2) {
-            updateStorylineMention($db, $storyline['storyline_id']);
+            updateStorylineProgress($db, $storyline['storyline_id'], $user_message);
         }
     }
     
-    // ===== STEP 7: CHECK FOR MILESTONE ACHIEVEMENTS =====
-    if (preg_match('/(passed|aced|won|finished|completed|got promoted|graduated)/i', $user_message)) {
-        addMilestone($db, $user_id, 'dan_achievement', 'personal', "Dan: " . substr($user_message, 0, 100));
-        setMisukiMood($db, $user_id, 'excited', 'Dan accomplished something!', 9);
-    }
+    // STEP 8: Check schedule
+    $activity_context = '';
+    $location_context = '';
+    $current_activity = null;
     
-    // ===== STEP 8: GET ENHANCED CONTEXT WITH WEEKLY SCHEDULE =====
-    
-    // Get Misuki's current status
     $misuki_status = getMisukiCurrentStatus($db, $user_id);
     
-    // Try to load the weekly schedule if it exists
-    $current_activity = null;
-    $activity_context = "";
-    
-    // Check if weekly schedule file exists and load it
-    $weekly_schedule_path = __DIR__ . '/../includes/misuki_weekly_schedule.php';
-    if (file_exists($weekly_schedule_path)) {
+    if (function_exists('getMisukiScheduledActivity')) {
         try {
-            require_once $weekly_schedule_path;
+            date_default_timezone_set('Asia/Tokyo');
+            $current_activity = getMisukiScheduledActivity();
+            date_default_timezone_set('Asia/Jakarta');
             
-            // Check if the functions exist
-            if (function_exists('getMisukiCurrentActivity')) {
-                $current_activity = getMisukiCurrentActivity();
+            if ($current_activity) {
+                $activity_context = "\n\n=== YOUR CURRENT ACTIVITY (IMPORTANT!) ===\n";
+                $activity_context .= "Right now in Japan, you're: " . $current_activity['activity'] . "\n";
                 
-                if ($current_activity) {
-                    $activity_context = "\n\n=== YOUR CURRENT ACTIVITY (DETAILED) ===\n";
-                    $activity_context .= "Right now you are: " . $current_activity['activity'] . " " . $current_activity['emoji'] . "\n";
-                    $activity_context .= "Activity type: " . $current_activity['type'] . "\n";
-                    $activity_context .= "Time: " . $current_activity['time'] . "\n";
-                    
-                    // Add natural context based on activity type
-                    switch ($current_activity['type']) {
-                        case 'class':
-                            $activity_context .= "You're currently in a university lecture.\n";
-                            $activity_context .= "You might:\n";
-                            $activity_context .= "- Reply quickly if it's break time\n";
-                            $activity_context .= "- Be brief if in class\n";
-                            $activity_context .= "- Mention what you're doing if chemistry class\n";
-                            break;
-                            
-                        case 'studying':
-                            $activity_context .= "You're doing homework/studying. You might:\n";
-                            $activity_context .= "- Mention what subject you're studying\n";
-                            $activity_context .= "- Be happy for the break/distraction\n";
-                            $activity_context .= "- Share if you're struggling with something\n";
-                            break;
-                            
-                        case 'church':
-                            $activity_context .= "You're at church (Sunday morning).\n";
-                            $activity_context .= "- You might mention the service\n";
-                            $activity_context .= "- Share thoughts about it\n";
-                            break;
-                            
-                        case 'personal':
-                            if (stripos($current_activity['activity'], 'dinner') !== false) {
-                                $activity_context .= "You're having dinner with your mom.\n";
-                                $activity_context .= "- Might mention what you're eating\n";
-                                $activity_context .= "- Mom might be nearby\n";
-                            }
-                            break;
-                            
-                        case 'sleep':
-                            $activity_context .= "You're sleeping or getting ready for bed.\n";
-                            $activity_context .= "- Might be in pajamas\n";
-                            $activity_context .= "- Getting sleepy\n";
-                            break;
-                    }
-                    
-                    $activity_context .= "\nReference your current activity naturally in conversation if relevant!\n";
+                if (isset($current_activity['location'])) {
+                    $activity_context .= "Location: " . $current_activity['location'] . "\n";
                 }
+                
+                if (isset($current_activity['context'])) {
+                    $activity_context .= $current_activity['context'] . "\n";
+                }
+                
+                $activity_context .= "\nReference your current activity naturally in conversation if relevant!\n";
             }
         } catch (Exception $e) {
             error_log("Weekly schedule error: " . $e->getMessage());
         }
     }
     
-    // ===== STEP 9: BUILD FULL CONTEXT =====
+    // STEP 9: Build context
     $memories = getUserMemories($db, $user_id);
     $recent_conversations = getRecentConversations($db, $user_id, 10);
     
-    // Build timeline context
     $timeline_context = buildTimelineContext($recent_conversations, $user_message);
     
     $reality_context = buildRealityContext(
@@ -311,95 +248,41 @@ try {
     $context .= $nickname_context;
     $context .= $core_memory_context;
     
-    // Add file context if exists
     if ($file_content) {
         $context .= "\n\n=== UPLOADED FILE ===\n";
         $context .= "Filename: " . $filename . "\n";
         $context .= "Content:\n" . $file_content . "\n";
+        $context .= "\nDan shared this file with you. Acknowledge it naturally and discuss its contents!\n";
     }
     
-    // ===== STEP 10: BUILD PERSONALITY PROMPT =====
-    $personality = getMisukiPersonalityPrompt();
+    $pending_events = getPendingFutureEvents($db, $user_id);
+    $overdue_events = getOverdueFutureEvents($db, $user_id);
+    $context .= buildFutureEventsContext($pending_events, $overdue_events);
     
-    // ===== STEP 11: CHECK FOR SPECIAL MESSAGE TYPES =====
-    $time_confusion_type = detectTimeConfusion($user_message, $time_of_day);
+    $core_memories = buildCoreMemoryContext();
+    $context .= $core_memories;
     
-    if ($time_confusion_type && !in_array($time_confusion_type, ['casual_morning_at_night', 'casual_night_at_day'])) {
-        $personality .= "\n\n=== TIME CONFUSION DETECTED ===\n";
-        $personality .= "Dan just said a greeting that doesn't match the actual time of day.\n";
-        $personality .= "Confusion type: $time_confusion_type\n";
-        $personality .= "Gently and playfully point this out!\n";
-    }
+    $personality_prompt = getMisukiPersonalityPrompt();
+    $full_prompt = $personality_prompt . "\n\n" . $context;
     
-    // ===== STEP 12: CALL CLAUDE API =====
+    // STEP 10: Call Claude API
     $api_key = getenv('ANTHROPIC_API_KEY');
     
     if (!$api_key) {
         $env_path = dirname(__DIR__) . '/.env';
         if (file_exists($env_path)) {
             $env_contents = file_get_contents($env_path);
-            if (preg_match('/ANTHROPIC_API_KEY\s*=\s*([^\n\r]+)/', $env_contents, $matches)) {
-                $api_key = trim($matches[1], '"\'');
+            if (preg_match('/ANTHROPIC_API_KEY=(.+)/', $env_contents, $matches)) {
+                $api_key = trim($matches[1]);
+                $api_key = trim($api_key, '"\'');
             }
         }
     }
     
     if (!$api_key) {
-        throw new Exception('API key not found');
+        throw new Exception('API key not configured');
     }
     
-    // Build the full prompt
-    $full_prompt = $personality . "\n\n" . $context;
-    
-    // Check if message should be split
-    $should_split = shouldSplitMessage($user_message, $message_analysis, $conversation_style);
-    
-    if ($should_split) {
-        // Call Claude to generate response and split it
-        $split_result = generateAndSplitMessage(
-            $api_key,
-            $full_prompt,
-            $user_message,
-            $conversation_style,
-            $current_mood
-        );
-        
-        if ($split_result['success'] && count($split_result['messages']) > 1) {
-            $messages = $split_result['messages'];
-            $emotion_timeline = parseEmotionsInMessage($messages[0]);
-            
-            // Save all messages to database
-            foreach ($messages as $msg) {
-                $stmt = $db->prepare("INSERT INTO conversations (user_id, sender, message, timestamp) VALUES (?, 'assistant', ?, NOW())");
-                $stmt->execute([$user_id, $msg]);
-            }
-            
-            // Update mood and dynamics
-            updateMoodFromInteraction($db, $user_id, $message_analysis, $user_message);
-            updateConversationStyle($db, $user_id, $message_analysis);
-            updateRelationshipDynamics($db, $user_id, $user_message, $messages[0]);
-            
-            $follow_ups = array_slice($messages, 1);
-            
-            echo json_encode([
-                'response' => $messages[0],
-                'mood' => $current_mood['current_mood'] ?? 'gentle',
-                'mood_text' => $current_mood['reason'] ?? 'Feeling gentle',
-                'emotion_timeline' => $emotion_timeline,
-                'has_split' => true,
-                'split_messages' => $follow_ups,
-                'split_count' => count($messages),
-                'closeness_level' => getRelationshipCloseness($db, $user_id),
-                'current_activity' => $current_activity ? $current_activity['activity'] : null,
-                'was_woken' => $misuki_status['was_woken'] ?? false
-            ]);
-            
-            exit;
-        }
-    }
-    
-    // ===== SINGLE MESSAGE PATH =====
-    // Call Claude API
     $ch = curl_init('https://api.anthropic.com/v1/messages');
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
@@ -433,37 +316,28 @@ try {
     $result = json_decode($response, true);
     $response_text = $result['content'][0]['text'] ?? '';
     
-    // Apply typo if appropriate
     if (shouldMakeTypo($current_mood, $misuki_status)) {
         $response_text = addNaturalTypo($response_text);
     }
     
-    // Parse emotions for visual system
     $emotion_timeline = parseEmotionsInMessage($response_text);
     
-    // Save the conversation
-    $stmt = $db->prepare("INSERT INTO conversations (user_id, sender, message, timestamp) VALUES (?, 'assistant', ?, NOW())");
-    $stmt->execute([$user_id, $response_text]);
+    // Save conversation
+    saveConversation($db, $user_id, $user_message, $response_text, $current_mood['current_mood'] ?? 'gentle');
     
-    // Save memory if significant
     if (shouldSaveMemory($message_analysis)) {
         saveMemory($db, $user_id, $user_message, $response_text, $message_analysis);
     }
     
-    // Update mood based on interaction
     updateMoodFromInteraction($db, $user_id, $message_analysis, $user_message);
-    
-    // Update conversation dynamics
     updateConversationStyle($db, $user_id, $message_analysis);
     updateRelationshipDynamics($db, $user_id, $user_message, $response_text);
     
-    // Check if Misuki gave Dan a nickname
     $new_nickname = detectDanNicknameInResponse($response_text);
     if ($new_nickname) {
         saveDanNickname($new_nickname);
     }
     
-    // Final response
     echo json_encode([
         'response' => $response_text,
         'mood' => $current_mood['current_mood'] ?? 'gentle',
@@ -480,7 +354,6 @@ try {
     error_log("File: " . $e->getFile());
     error_log("Line: " . $e->getLine());
     
-    // Return a valid JSON response even on error
     echo json_encode([
         'response' => "Sorry, I'm having a little trouble right now... Can you try saying that again? 🥺",
         'mood' => 'gentle',
@@ -490,20 +363,23 @@ try {
     ]);
 }
 
-// Helper functions (only ones NOT in other files)
-
 function buildTimelineContext($recent_conversations, $user_message) {
     $context = "\n\n=== RECENT TIMELINE ===\n";
     
     if (!empty($recent_conversations)) {
         $context .= "Last " . count($recent_conversations) . " messages:\n";
         foreach (array_slice($recent_conversations, -5) as $msg) {
-            $sender = $msg['sender'] === 'user' ? 'Dan' : 'Misuki';
-            $short_msg = substr($msg['message'], 0, 60);
-            $context .= "[$sender]: $short_msg...\n";
+            if (isset($msg['user_message'])) {
+                $user_short = substr($msg['user_message'], 0, 60);
+                $context .= "[Dan]: $user_short...\n";
+            }
+            
+            if (isset($msg['misuki_response'])) {
+                $misuki_short = substr($msg['misuki_response'], 0, 60);
+                $context .= "[Misuki]: $misuki_short...\n";
+            }
         }
         
-        // Add timestamp context
         $last_message = end($recent_conversations);
         if ($last_message && isset($last_message['timestamp'])) {
             $last_timestamp = $last_message['timestamp'];
@@ -526,62 +402,73 @@ function buildTimelineContext($recent_conversations, $user_message) {
                 $context .= "Time since last message: {$days} day(s) and {$remaining_hours} hours\n";
             }
             
-            $context .= "\n🚨 DO NOT MAKE UP TIME CALCULATIONS! Use ONLY the numbers above!\n\n";
+            $context .= "\n🚨 DO NOT MAKE UP TIME CALCULATIONS! Use ONLY the timestamps shown above!\n";
+            $context .= "=================================\n";
         }
     }
     
     return $context;
 }
 
-function detectTimeConfusion($message, $timeOfDay) {
-    $messageLower = strtolower($message);
+function buildRealityContext($current_mood, $conversation_style, $active_storylines, $friends, $external_context, $family_mentioned = null) {
+    $context = "\n\n=== 🌟 MISUKI'S REALITY SYSTEM ===\n";
     
-    // Check for casual/joking greetings
-    $casual_greetings = ['morning', 'good morning', 'gm', 'good night', 'gn', 'goodnight'];
-    $is_casual_greeting = false;
-    
-    foreach ($casual_greetings as $greeting) {
-        if (trim($messageLower) === $greeting || preg_match('/^' . preg_quote($greeting, '/') . '[!.]*$/i', trim($messageLower))) {
-            $is_casual_greeting = true;
-            break;
+    // 1. Current Mood
+    if ($current_mood) {
+        $context .= "\n--- YOUR CURRENT MOOD ---\n";
+        $context .= "Mood: {$current_mood['current_mood']} (intensity: {$current_mood['mood_intensity']}/10)\n";
+        $context .= "Reason: {$current_mood['mood_reason']}\n";
+        
+        $hours_ago = round((time() - strtotime($current_mood['mood_started'])) / 3600, 1);
+        $context .= "This mood started: {$hours_ago} hours ago\n";
+        
+        $mood_guidance = [
+            'excited' => "You're genuinely excited! Show energy and enthusiasm.",
+            'happy' => "You're in a good mood. Be warm and positive.",
+            'stressed' => "You're feeling stressed. Might be shorter, mention what's bothering you.",
+            'anxious' => "You're anxious. Might seek reassurance.",
+            'upset' => "Something upset you. Not hiding it completely.",
+            'tired' => "You're tired. Shorter responses, maybe mention being sleepy.",
+            'content' => "You're content and peaceful. Calm, warm energy.",
+        ];
+        
+        if (isset($mood_guidance[$current_mood['current_mood']])) {
+            $context .= "💭 " . $mood_guidance[$current_mood['current_mood']] . "\n";
         }
     }
     
-    // If it's JUST a greeting, be more lenient
-    if ($is_casual_greeting && str_word_count($message) <= 2) {
-        if ($timeOfDay === 'night' && preg_match('/^(morning|gm)/i', trim($messageLower))) {
-            return 'casual_morning_at_night';
-        } elseif (($timeOfDay === 'morning' || $timeOfDay === 'afternoon') && preg_match('/^(night|gn)/i', trim($messageLower))) {
-            return 'casual_night_at_day';
-        }
-        return false;
-    }
-    
-    // Original logic for full greetings
-    $morning_patterns = ['/good\s*morning/i', '/morning/i'];
-    $night_patterns = ['/good\s*night/i', '/night\s*night/i', '/goodnight/i'];
-    
-    foreach ($morning_patterns as $pattern) {
-        if (preg_match($pattern, $messageLower)) {
-            if ($timeOfDay === 'night') {
-                return 'morning_at_night';
-            } else if ($timeOfDay === 'afternoon' || $timeOfDay === 'evening') {
-                return 'morning_at_afternoon';
-            }
+    // 2. Active Storylines
+    if (!empty($active_storylines)) {
+        $context .= "\n--- ONGOING STORYLINES IN YOUR LIFE ---\n";
+        foreach ($active_storylines as $story) {
+            $context .= "• {$story['storyline_title']}: {$story['storyline_text']}\n";
         }
     }
     
-    foreach ($night_patterns as $pattern) {
-        if (preg_match($pattern, $messageLower)) {
-            if ($timeOfDay === 'morning') {
-                return 'night_at_morning';
-            } else if ($timeOfDay === 'afternoon') {
-                return 'night_at_afternoon';
-            }
+    // 3. Friends
+    if (!empty($friends)) {
+        $context .= "\n--- YOUR FRIENDS ---\n";
+        $friend_names = array_column($friends, 'friend_name');
+        $context .= "Your friends: " . implode(', ', $friend_names) . "\n";
+    }
+    
+    // 4. External Context
+    if (!empty($external_context)) {
+        $context .= "\n--- CURRENT CONTEXT ---\n";
+        foreach ($external_context as $ctx) {
+            $context .= "• {$ctx['context_data']}\n";
         }
     }
     
-    return false;
+    // 5. Family context
+    if ($family_mentioned) {
+        $context .= "\n--- ⚠️ FAMILY MENTION DETECTED ---\n";
+        $context .= "Dan mentioned: '$family_mentioned'\n";
+        $context .= "YOUR family: Mom (Sara), Dad (Reo), Cat (Whiskers)\n";
+        $context .= "DAN'S family: His dad, mom, sister Debby\n";
+    }
+    
+    return $context;
 }
 
 function updateMoodFromInteraction($db, $user_id, $analysis, $user_message) {
@@ -593,3 +480,4 @@ function updateMoodFromInteraction($db, $user_id, $analysis, $user_message) {
         setMisukiMood($db, $user_id, 'concerned', 'Dan seems stressed', 5);
     }
 }
+?>

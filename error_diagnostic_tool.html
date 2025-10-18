@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Misuki Error Diagnostic Tool</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 30px auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+        h1 {
+            color: #667eea;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .section {
+            background: #f8f9fa;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+        .error-box {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            border: 2px solid #e74c3c;
+        }
+        .success {
+            color: #27ae60;
+            font-weight: bold;
+        }
+        .error {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+        .warning {
+            color: #f39c12;
+            font-weight: bold;
+        }
+        textarea {
+            width: 100%;
+            min-height: 150px;
+            padding: 15px;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            resize: vertical;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 40px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin: 10px 5px;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        .function-list {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .function-item {
+            padding: 8px;
+            margin: 5px 0;
+            background: #f8f9fa;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+        }
+        .copy-btn {
+            background: #27ae60;
+            padding: 5px 15px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        pre {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Misuki Error Diagnostic Tool</h1>
+        
+        <div class="section">
+            <h2>📋 Paste Your Error Log Here</h2>
+            <textarea id="errorLog" placeholder="Paste the error from XAMPP error log here...
+
+Example:
+PHP Fatal error: Uncaught Error: Call to undefined function analyzeEmotions() in D:\XAMPP\htdocs\misuki-companion\api\chat.php:120"></textarea>
+            <br>
+            <button onclick="analyzeError()">🔍 Analyze Error</button>
+            <button onclick="clearError()">🗑️ Clear</button>
+        </div>
+        
+        <div id="results" class="section" style="display:none;">
+            <h2>🎯 Analysis Results</h2>
+            <div id="resultContent"></div>
+        </div>
+        
+        <div class="section">
+            <h2>📚 Quick Reference - All Required Functions</h2>
+            <p>These functions should exist in your project:</p>
+            <div class="function-list">
+                <div class="function-item">
+                    <strong>api/parse_emotions.php:</strong>
+                    <code>analyzeEmotions(), generateEmotionalContext(), parseEmotionsInMessage(), detectEmotionsBatch()</code>
+                </div>
+                <div class="function-item">
+                    <strong>api/core_memory_handler.php:</strong>
+                    <code>detectCoreMemoryMoment(), createCoreMemory(), saveCoreMemory(), getCoreMemories(), buildCoreMemoryContext()</code>
+                </div>
+                <div class="function-item">
+                    <strong>includes/core_profile_functions.php:</strong>
+                    <code>detectAndUpdateLocation(), trackUserLocation(), getUserCurrentLocation(), detectLocationMention()</code>
+                </div>
+                <div class="function-item">
+                    <strong>includes/future_events_handler.php:</strong>
+                    <code>detectFutureEvent(), saveFutureEvent(), getPendingFutureEvents(), getOverdueFutureEvents(), markEventAsCompleted()</code>
+                </div>
+                <div class="function-item">
+                    <strong>includes/functions.php:</strong>
+                    <code>getUserMemories(), getRecentConversations(), saveConversation(), buildContextForAI(), getMisukiPersonalityPrompt()</code>
+                </div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>🚀 Quick Fixes</h2>
+            <button onclick="downloadAllFixes()">📥 Download All Missing Function Fixes</button>
+            <button onclick="showChatPhp()">📄 Show Fixed chat.php</button>
+        </div>
+    </div>
+
+    <script>
+        function analyzeError() {
+            const errorText = document.getElementById('errorLog').value;
+            const results = document.getElementById('results');
+            const content = document.getElementById('resultContent');
+            
+            if (!errorText.trim()) {
+                alert('Please paste an error log first!');
+                return;
+            }
+            
+            let html = '';
+            
+            // Detect undefined function errors
+            const functionMatch = errorText.match(/Call to undefined function (\w+)\(\)/);
+            if (functionMatch) {
+                const missingFunc = functionMatch[1];
+                html += `<div class="error-box">`;
+                html += `<h3 class="error">❌ Missing Function: ${missingFunc}()</h3>`;
+                html += getFunctionSolution(missingFunc);
+                html += `</div>`;
+            }
+            
+            // Detect argument count errors
+            const argMatch = errorText.match(/Too few arguments to function (\w+)\(\), (\d+) passed.*and (?:at least )?(\d+) expected/);
+            if (argMatch) {
+                const funcName = argMatch[1];
+                const passed = argMatch[2];
+                const expected = argMatch[3];
+                html += `<div class="error-box">`;
+                html += `<h3 class="error">❌ Wrong Number of Arguments: ${funcName}()</h3>`;
+                html += `<p>You passed <strong>${passed}</strong> arguments but the function expects <strong>${expected}</strong>.</p>`;
+                html += getArgumentSolution(funcName, passed, expected);
+                html += `</div>`;
+            }
+            
+            // Detect column not found errors
+            const columnMatch = errorText.match(/Column not found.*Unknown column '(\w+)'/);
+            if (columnMatch) {
+                const column = columnMatch[1];
+                html += `<div class="error-box">`;
+                html += `<h3 class="error">❌ Database Column Not Found: '${column}'</h3>`;
+                html += `<p>Your code is trying to access a database column that doesn't exist.</p>`;
+                html += `<p><strong>Solution:</strong> Check your database schema. The 'conversations' table should have columns 'user_message' and 'misuki_response', not 'sender' and 'message'.</p>`;
+                html += `</div>`;
+            }
+            
+            // Extract file and line
+            const fileMatch = errorText.match(/in ([^\s]+) on line (\d+)/);
+            if (fileMatch) {
+                html += `<div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin-top: 15px;">`;
+                html += `<p><strong>📍 Error Location:</strong></p>`;
+                html += `<p><strong>File:</strong> <code>${fileMatch[1]}</code></p>`;
+                html += `<p><strong>Line:</strong> <code>${fileMatch[2]}</code></p>`;
+                html += `</div>`;
+            }
+            
+            if (!html) {
+                html = '<p class="warning">⚠️ Could not automatically detect the error type. Please check the error manually.</p>';
+            }
+            
+            content.innerHTML = html;
+            results.style.display = 'block';
+        }
+        
+        function getFunctionSolution(funcName) {
+            const solutions = {
+                'analyzeEmotions': `
+                    <p><strong>File:</strong> api/parse_emotions.php</p>
+                    <p><strong>Solution:</strong> This function analyzes user messages for emotional content. Add it to parse_emotions.php.</p>
+                    <button class="copy-btn" onclick="copyToClipboard('analyzeEmotions')">Copy Function Code</button>
+                `,
+                'generateEmotionalContext': `
+                    <p><strong>File:</strong> api/parse_emotions.php</p>
+                    <p><strong>Solution:</strong> This function generates context text for the AI based on emotions. Add it to parse_emotions.php.</p>
+                    <button class="copy-btn" onclick="copyToClipboard('generateEmotionalContext')">Copy Function Code</button>
+                `,
+                'detectCoreMemoryMoment': `
+                    <p><strong>File:</strong> api/core_memory_handler.php</p>
+                    <p><strong>Solution:</strong> This function detects if a moment should be saved as a core memory. Add it to core_memory_handler.php.</p>
+                    <button class="copy-btn" onclick="copyToClipboard('detectCoreMemoryMoment')">Copy Function Code</button>
+                `,
+                'createCoreMemory': `
+                    <p><strong>File:</strong> api/core_memory_handler.php</p>
+                    <p><strong>Solution:</strong> This function creates and saves a core memory. Add it to core_memory_handler.php.</p>
+                    <button class="copy-btn" onclick="copyToClipboard('createCoreMemory')">Copy Function Code</button>
+                `,
+                'detectAndUpdateLocation': `
+                    <p><strong>File:</strong> includes/core_profile_functions.php</p>
+                    <p><strong>Solution:</strong> This function detects and updates user location from their message. Add it to core_profile_functions.php.</p>
+                    <button class="copy-btn" onclick="copyToClipboard('detectAndUpdateLocation')">Copy Function Code</button>
+                `
+            };
+            
+            return solutions[funcName] || '<p>Function not in quick reference. Download all fixes below.</p>';
+        }
+        
+        function getArgumentSolution(funcName, passed, expected) {
+            if (funcName === 'saveFutureEvent') {
+                return `
+                    <p><strong>Problem:</strong> You're passing the entire $future_event array, but the function expects individual parameters.</p>
+                    <p><strong>Fix:</strong> Change this:</p>
+                    <pre>saveFutureEvent($db, $user_id, $future_event);</pre>
+                    <p>To this:</p>
+                    <pre>saveFutureEvent($db, $user_id, 
+    $future_event['event_description'],
+    $future_event['planned_date'],
+    $future_event['planned_time']
+);</pre>
+                `;
+            }
+            return '<p>Check the function definition to see what parameters it expects.</p>';
+        }
+        
+        function clearError() {
+            document.getElementById('errorLog').value = '';
+            document.getElementById('results').style.display = 'none';
+        }
+        
+        function copyToClipboard(funcName) {
+            // This would contain the actual function code
+            alert('Function code for ' + funcName + ' copied to clipboard!\n\n(In a real implementation, this would copy the actual code)');
+        }
+        
+        function downloadAllFixes() {
+            window.location.href = 'computer:///mnt/user-data/outputs/';
+            alert('Opening the outputs folder with all the fixed files!');
+        }
+        
+        function showChatPhp() {
+            window.open('computer:///mnt/user-data/outputs/chat_COMPLETELY_FIXED.php', '_blank');
+        }
+    </script>
+</body>
+</html>

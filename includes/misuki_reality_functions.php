@@ -388,20 +388,26 @@ function generateWeatherContext() {
 
 function getConversationStyle($db, $user_id) {
     $stmt = $db->prepare("
-        SELECT * FROM misuki_conversation_style 
-        WHERE user_id = ?
+        SELECT * FROM misuki_conversation_style WHERE user_id = ?
     ");
     $stmt->execute([$user_id]);
     $style = $stmt->fetch(PDO::FETCH_ASSOC);
     
     if (!$style) {
-        // Initialize
+        // Create default
         $stmt = $db->prepare("
-            INSERT INTO misuki_conversation_style (user_id, current_energy_level, recent_topics, conversation_focus)
+            INSERT INTO misuki_conversation_style 
+            (user_id, current_energy_level, recent_topics, conversation_focus) 
             VALUES (?, 7, '[]', 'general')
         ");
         $stmt->execute([$user_id]);
-        return getConversationStyle($db, $user_id);
+        
+        return [
+            'user_id' => $user_id,
+            'current_energy_level' => 7,
+            'recent_topics' => '[]',
+            'conversation_focus' => 'general'
+        ];
     }
     
     return $style;
@@ -539,5 +545,105 @@ function getAsymmetricFocusNote() {
     
     return $notes[array_rand($notes)];
 }
+
+// Add these functions to includes/misuki_reality_functions.php
+
+/**
+ * Update conversation style based on interaction
+ */
+function updateConversationStyle($db, $user_id, $message_analysis) {
+    // Get or create conversation style
+    $stmt = $db->prepare("
+        SELECT * FROM misuki_conversation_style WHERE user_id = ?
+    ");
+    $stmt->execute([$user_id]);
+    $style = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if (!$style) {
+        // Create default
+        $stmt = $db->prepare("
+            INSERT INTO misuki_conversation_style 
+            (user_id, current_energy_level, recent_topics, conversation_focus) 
+            VALUES (?, 7, '[]', 'general')
+        ");
+        $stmt->execute([$user_id]);
+        return;
+    }
+    
+    // Adjust energy based on user's emotion
+    $energy = $style['current_energy_level'];
+    
+    if (isset($message_analysis['dominant_emotion'])) {
+        switch ($message_analysis['dominant_emotion']) {
+            case 'excited':
+            case 'happy':
+                $energy = min(10, $energy + 1);
+                break;
+            case 'sad':
+            case 'upset':
+                $energy = max(3, $energy - 1);
+                break;
+            case 'anxious':
+            case 'stressed':
+                $energy = max(4, $energy - 1);
+                break;
+        }
+    }
+    
+    // Update
+    $stmt = $db->prepare("
+        UPDATE misuki_conversation_style 
+        SET current_energy_level = ?,
+            last_topic_shift = NOW()
+        WHERE user_id = ?
+    ");
+    $stmt->execute([$energy, $user_id]);
+}
+
+/**
+ * Update relationship dynamics based on conversation
+ */
+function updateRelationshipDynamics($db, $user_id, $user_message, $misuki_response) {
+    // Track conversation count
+    $stmt = $db->prepare("
+        INSERT INTO relationship_dynamics 
+        (user_id, total_conversations, last_interaction) 
+        VALUES (?, 1, NOW())
+        ON DUPLICATE KEY UPDATE
+            total_conversations = total_conversations + 1,
+            last_interaction = NOW()
+    ");
+    $stmt->execute([$user_id]);
+    
+    // Check for intimate keywords to increase closeness
+    $intimate_keywords = ['love', 'miss', 'care', 'special', 'important', 'mean a lot'];
+    $message_lower = strtolower($user_message . ' ' . $misuki_response);
+    
+    foreach ($intimate_keywords as $keyword) {
+        if (strpos($message_lower, $keyword) !== false) {
+            $stmt = $db->prepare("
+                UPDATE relationship_dynamics 
+                SET closeness_level = LEAST(10, closeness_level + 0.1)
+                WHERE user_id = ?
+            ");
+            $stmt->execute([$user_id]);
+            break;
+        }
+    }
+}
+
+/**
+ * Get current relationship closeness level
+ */
+function getRelationshipCloseness($db, $user_id) {
+    $stmt = $db->prepare("
+        SELECT closeness_level FROM relationship_dynamics WHERE user_id = ?
+    ");
+    $stmt->execute([$user_id]);
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    return $result ? $result['closeness_level'] : 5.0;
+}
+
 
 ?>

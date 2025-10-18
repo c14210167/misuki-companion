@@ -263,9 +263,7 @@ function getRecentMemories($db, $user_id, $days = 7) {
 
 // ==================== CONTEXT BUILDING ====================
 
-// Replace the buildContextForAI function in includes/functions.php
-
-function buildContextForAI($memories, $conversations, $emotional_context) {
+function buildContextForAI($memories, $conversations, $emotional_context, $current_mood = null) {
     $context = "=== What I Remember About You ===\n\n";
     
     if (empty($memories)) {
@@ -281,7 +279,7 @@ function buildContextForAI($memories, $conversations, $emotional_context) {
             $grouped[$type][] = $memory['memory_value'];
         }
         
-        // Format memories nicely
+        // Format memories
         $type_labels = [
             'name' => 'Your name',
             'age' => 'Your age',
@@ -289,10 +287,7 @@ function buildContextForAI($memories, $conversations, $emotional_context) {
             'hobby' => 'Things you enjoy',
             'work' => 'Your work',
             'family' => 'About your family',
-            'pet' => 'Your pets',
-            'goal' => 'Your goals',
-            'preference' => 'Your preferences',
-            'emotional_context' => 'Recent feelings'
+            'pet' => 'Your pets'
         ];
         
         foreach ($grouped as $type => $values) {
@@ -301,26 +296,29 @@ function buildContextForAI($memories, $conversations, $emotional_context) {
         }
     }
     
-    if (!empty($emotional_context)) {
-        $context .= "\n=== Recent Emotional Pattern ===\n";
-        $context .= "You've been feeling {$emotional_context['dominant_emotion']} lately (mentioned {$emotional_context['frequency']} times this week)\n";
+    // Add emotional context if it's a string
+    if (is_string($emotional_context) && !empty($emotional_context)) {
+        $context .= $emotional_context;
     }
     
-    if (!empty($conversations) && count($conversations) > 0) {
-        $context .= "\n=== RECENT CONVERSATION HISTORY (MOST IMPORTANT - READ CAREFULLY) ===\n";
-        $context .= "This is your ONGOING conversation with Dan. Pay close attention to the flow:\n\n";
+    // Add conversation history
+    if (!empty($conversations)) {
+        $context .= "\n=== RECENT CONVERSATION HISTORY ===\n";
         
-        // Show ALL recent conversations for better context
-        foreach ($conversations as $index => $conv) {
-            $timestamp = date('M j, g:i A', strtotime($conv['timestamp']));
-            $context .= "[$timestamp]\n";
-            $context .= "Dan: " . $conv['user_message'] . "\n";
-            $context .= "You: " . $conv['misuki_response'] . "\n\n";
+        foreach (array_slice($conversations, -5) as $conv) {
+            if (isset($conv['timestamp'])) {
+                $timestamp = date('M j, g:i A', strtotime($conv['timestamp']));
+                $context .= "[$timestamp]\n";
+            }
+            
+            if (isset($conv['user_message'])) {
+                $context .= "Dan: " . $conv['user_message'] . "\n";
+            }
+            
+            if (isset($conv['misuki_response'])) {
+                $context .= "You: " . $conv['misuki_response'] . "\n\n";
+            }
         }
-        
-        $context .= "^^^ This is your recent conversation history. The MOST RECENT messages are at the BOTTOM.\n";
-        $context .= "CRITICAL: When Dan asks 'do you remember what I was doing yesterday?', look at the conversation history above!\n";
-        $context .= "CRITICAL: When Dan gives you a short answer like '10', look at YOUR LAST QUESTION to understand the context!\n\n";
     }
     
     return $context;
@@ -493,6 +491,88 @@ function formatMemoryForDisplay($memory) {
     
     $icon = $type_icons[$memory['memory_type']] ?? '📝';
     return "$icon " . $memory['memory_value'];
+}
+
+/**
+ * Determine if a message should be saved as a memory
+ */
+function shouldSaveMemory($message_analysis) {
+    if (!isset($message_analysis['original_message'])) {
+        return false;
+    }
+    
+    $message = $message_analysis['original_message'];
+    $message_lower = strtolower(trim($message));
+    
+    // Skip trivial messages
+    $trivial = ['hi', 'hello', 'hey', 'ok', 'okay', 'lol', 'haha', 'thanks'];
+    if (in_array($message_lower, $trivial)) {
+        return false;
+    }
+    
+    // Must be substantial
+    if (strlen($message) < 10 || str_word_count($message) < 3) {
+        return false;
+    }
+    
+    // Save if strong emotions
+    if (isset($message_analysis['dominant_emotion']) && 
+        in_array($message_analysis['dominant_emotion'], ['sad', 'upset', 'anxious', 'excited', 'happy'])) {
+        return true;
+    }
+    
+    // Save if high intensity
+    if (isset($message_analysis['intensity']) && $message_analysis['intensity'] >= 7) {
+        return true;
+    }
+    
+    // Check for personal information
+    $personal_patterns = [
+        '/my name is/i',
+        '/i\'m \d+ years old/i',
+        '/i live in/i',
+        '/i work as/i',
+        '/my .*(mom|dad|sister|brother|family)/i'
+    ];
+    
+    foreach ($personal_patterns as $pattern) {
+        if (preg_match($pattern, $message_lower)) {
+            return true;
+        }
+    }
+    
+    return str_word_count($message) > 20;
+}
+
+/**
+ * Save a memory from the conversation
+ */
+function saveMemory($db, $user_id, $user_message, $misuki_response, $message_analysis) {
+    $patterns = [
+        'name' => '/(?:my name is|i\'m|i am|call me)\s+([A-Z][a-z]+)/i',
+        'age' => '/(?:i\'m|i am)\s+(\d+)(?:\s+years old)?/i',
+        'location' => '/(?:i live in|i\'m from)\s+([\w\s]+)/i',
+        'hobby' => '/i\s+(?:love|like|enjoy)\s+([\w\s]+)/i',
+        'work' => '/i\s+work\s+(?:as|at)\s+([\w\s]+)/i'
+    ];
+    
+    foreach ($patterns as $type => $regex) {
+        if (preg_match($regex, $user_message, $matches)) {
+            $memory_value = trim($matches[1]);
+            
+            $stmt = $db->prepare("
+                INSERT INTO memories 
+                (user_id, memory_type, memory_key, memory_value, importance_score) 
+                VALUES (?, ?, ?, ?, 7)
+                ON DUPLICATE KEY UPDATE
+                    memory_value = VALUES(memory_value),
+                    last_accessed = NOW()
+            ");
+            $stmt->execute([$user_id, $type, $type . '_' . $user_id, $memory_value]);
+        }
+    }
+    
+    return true;
 }
 
 ?>

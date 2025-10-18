@@ -278,4 +278,106 @@ function loadApiKeyForMemory() {
     return $api_key;
 }
 
+/**
+ * Detect if this moment should be saved as a core memory
+ * Wrapper around shouldStoreAsCoreMemory with additional checks
+ */
+function detectCoreMemoryMoment($user_message, $message_analysis, $current_mood) {
+    // Don't store if message is too short
+    if (strlen($user_message) < 10) {
+        return false;
+    }
+    
+    // Don't store trivial messages
+    $trivial = ['hi', 'hello', 'hey', 'ok', 'okay', 'lol', 'haha'];
+    $message_lower = strtolower(trim($user_message));
+    if (in_array($message_lower, $trivial)) {
+        return false;
+    }
+    
+    // Build context from mood and analysis
+    $context = '';
+    if (isset($current_mood['current_mood'])) {
+        $context .= "Misuki's mood: " . $current_mood['current_mood'] . ". ";
+    }
+    if (isset($message_analysis['dominant_emotion'])) {
+        $context .= "Dan's emotion: " . $message_analysis['dominant_emotion'] . ". ";
+    }
+    
+    // Use AI to determine if this is memory-worthy
+    return shouldStoreAsCoreMemory($user_message, $context);
+}
+
+/**
+ * Create and save a core memory from user's message
+ * Returns the memory info if saved, false otherwise
+ */
+function createCoreMemory($db, $user_id, $user_message, $message_analysis) {
+    $decision = shouldStoreAsCoreMemory($user_message);
+    
+    if (!$decision || !$decision['should_store']) {
+        return false;
+    }
+    
+    // Save to file
+    $memory_text = $decision['summary'] ?? $user_message;
+    $saved = saveCoreMemory($memory_text);
+    
+    if (!$saved) {
+        return false;
+    }
+    
+    // Return memory info
+    return [
+        'description' => $memory_text,
+        'emotion' => $message_analysis['dominant_emotion'] ?? 'neutral',
+        'timestamp' => date('Y-m-d H:i:s')
+    ];
+}
+
+/**
+ * Detect and update user's location from their message
+ * Returns location info and context
+ */
+function detectAndUpdateLocation($db, $user_id, $message) {
+    $detected_location = detectLocationMention($message);
+    
+    if ($detected_location) {
+        // Save the location
+        trackUserLocation($db, $user_id, $detected_location);
+        
+        // Build context for AI
+        $context = "\n\n=== LOCATION UPDATE ===\n";
+        $context .= "Dan just mentioned he's $detected_location.\n";
+        $context .= "Reference this naturally in your response if relevant!\n";
+        
+        return [
+            'location' => $detected_location,
+            'context' => $context,
+            'updated' => true
+        ];
+    }
+    
+    // Check if we have a stored location
+    $current_location = getUserCurrentLocation($db, $user_id);
+    
+    if ($current_location) {
+        $context = "\n\n=== DAN'S CURRENT LOCATION ===\n";
+        $context .= "Last known location: $current_location\n";
+        
+        return [
+            'location' => $current_location,
+            'context' => $context,
+            'updated' => false
+        ];
+    }
+    
+    // No location info
+    return [
+        'location' => null,
+        'context' => '',
+        'updated' => false
+    ];
+}
+
 ?>
