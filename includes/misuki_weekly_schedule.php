@@ -251,6 +251,7 @@ function getMisukiWeeklySchedule() {
 }
 
 // Get current activity based on Saitama time
+
 function getMisukiCurrentActivity() {
     date_default_timezone_set('Asia/Tokyo');
     
@@ -260,26 +261,22 @@ function getMisukiCurrentActivity() {
     $schedule = getMisukiWeeklySchedule();
     $today_schedule = $schedule[$current_day];
     
-    // Find the current activity
+    // Find the current activity by looking for the LAST activity whose time has passed
     $current_activity = null;
-    for ($i = 0; $i < count($today_schedule); $i++) {
-        $activity_time = $today_schedule[$i]['time'];
-        
-        // Check if current time is past this activity
-        if ($current_time >= $activity_time) {
-            $current_activity = $today_schedule[$i];
-            
-            // Check if there's a next activity and we haven't reached it yet
-            if ($i + 1 < count($today_schedule)) {
-                $next_time = $today_schedule[$i + 1]['time'];
-                if ($current_time >= $next_time) {
-                    continue; // Move to next activity
-                }
-            }
+    
+    foreach ($today_schedule as $activity) {
+        // If this activity's time has passed or is now
+        if ($current_time >= $activity['time']) {
+            // This could be the current activity
+            $current_activity = $activity;
+        } else {
+            // We've found an activity in the future, so stop
+            break;
         }
     }
     
-    // If we're past midnight and before first activity, use last activity from previous day
+    // If no activity found (we're before the first activity of the day)
+    // Use the last activity from yesterday
     if ($current_activity === null) {
         $yesterday = date('l', strtotime('-1 day'));
         $yesterday_schedule = $schedule[strtolower($yesterday)];
