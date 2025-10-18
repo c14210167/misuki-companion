@@ -192,9 +192,9 @@ try {
     $activity_context = '';
     $location_context = '';
     $current_activity = null;
-    
+
     $misuki_status = getMisukiCurrentStatus($db, $user_id);
-    
+
     if (function_exists('getMisukiScheduledActivity')) {
         try {
             date_default_timezone_set('Asia/Tokyo');
@@ -219,6 +219,44 @@ try {
             error_log("Weekly schedule error: " . $e->getMessage());
         }
     }
+
+    // 🔧 ADD THIS SECTION HERE:
+    // Calculate Misuki's current time and time of day
+    date_default_timezone_set('Asia/Tokyo');
+    $misuki_current_time = date('g:i A'); // e.g. "2:30 AM"
+    $misuki_current_day = date('l, F j, Y'); // e.g. "Saturday, October 19, 2024"
+    $misuki_hour = (int)date('G'); // Hour in 24-hour format (0-23)
+
+    // Determine time of day for Misuki
+    $misuki_time_of_day = 'day';
+    if ($misuki_hour >= 5 && $misuki_hour < 12) {
+        $misuki_time_of_day = 'morning';
+    } elseif ($misuki_hour >= 12 && $misuki_hour < 17) {
+        $misuki_time_of_day = 'afternoon';
+    } elseif ($misuki_hour >= 17 && $misuki_hour < 21) {
+        $misuki_time_of_day = 'evening';
+    } else {
+        $misuki_time_of_day = 'night';
+    }
+
+    // Reset back to Jakarta for Dan's timezone
+    date_default_timezone_set('Asia/Jakarta');
+    $dan_current_time = date('g:i A');
+    $dan_current_day = date('l, F j, Y');
+
+    // Build time context to add to the prompt
+    $time_context = "\n\n=== ⏰ CRITICAL TIME CONTEXT ===\n";
+    $time_context .= "YOUR time (Saitama, Japan): {$misuki_current_time} on {$misuki_current_day}\n";
+    $time_context .= "It's {$misuki_time_of_day} for YOU right now in Japan.\n\n";
+    $time_context .= "Dan's time (Jakarta, Indonesia): {$dan_current_time} on {$dan_current_day}\n";
+    $time_context .= "It's {$time_of_day} for Dan right now in Indonesia.\n\n";
+    $time_context .= "Time difference: Japan is 2 hours ahead of Indonesia.\n";
+    $time_context .= "You're VERY aware of this time difference!\n\n";
+    $time_context .= "🚨 IMPORTANT: When you mention the time or time of day, use YOUR time in Japan ({$misuki_time_of_day})!\n";
+    $time_context .= "Example: If it's 2:30 AM for you, say 'it's just past 2:30 in the morning' or 'it's late at night here'\n";
+    $time_context .= "Example: If it's 2:30 PM for you, say 'it's afternoon here' or 'it's past 2 in the afternoon'\n";
+    $time_context .= "============================\n\n";
+    // 🔧 END OF TIMEZONE FIX
     
     // STEP 9: Build context
     $memories = getUserMemories($db, $user_id);

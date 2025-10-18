@@ -1,6 +1,7 @@
 // =========================================
-// HISTORY MODULE
+// HISTORY MODULE (FIXED)
 // Load and display chat history
+// 🔧 FIX: Properly display all parts of split messages
 // =========================================
 
 import { chatMessages } from '../chat.js';
@@ -26,7 +27,7 @@ export async function loadChatHistory() {
             },
             body: JSON.stringify({
                 user_id: 1,
-                limit: 25  // 🔧 CHANGED FROM 200 TO 25
+                limit: 25
             }),
             cache: 'no-store'
         });
@@ -49,7 +50,7 @@ export async function loadChatHistory() {
             chatMessages.innerHTML = '';
             
             let lastDate = null;
-            let lastMood = null; // Track the last mood from history
+            let lastMood = null;
             
             // Add all previous conversations with date separators
             data.conversations.forEach((conv, index) => {
@@ -69,21 +70,25 @@ export async function loadChatHistory() {
                 if (dateStr !== lastDate) {
                     addDateSeparator(dateStr);
                     lastDate = dateStr;
-                    window.lastMessageDate = dateStr; // Update global tracker
+                    window.lastMessageDate = dateStr;
                 }
                 
                 // Add user message
                 addMessageInstant('user', conv.user_message, conv.timestamp);
                 
-                // Check if Misuki's response contains [SPLIT] marker
+                // 🔧 FIX: Check if Misuki's response contains [SPLIT] marker
                 if (conv.misuki_response.includes('[SPLIT]')) {
-                    // Split message was saved - break it apart
+                    // This was a split message - break it apart and display ALL parts
                     const splitMessages = conv.misuki_response.split('\n[SPLIT]\n');
                     console.log(`💬 Found split message with ${splitMessages.length} parts`);
                     
-                    // Add each part as a separate message
+                    // 🔧 FIX: Add EACH part as a separate message
                     splitMessages.forEach((messagePart, partIndex) => {
-                        addMessageInstant('misuki', messagePart.trim(), conv.timestamp);
+                        const trimmedPart = messagePart.trim();
+                        if (trimmedPart) {  // Only add non-empty parts
+                            console.log(`   📝 Part ${partIndex + 1}: "${trimmedPart.substring(0, 50)}..."`);
+                            addMessageInstant('misuki', trimmedPart, conv.timestamp);
+                        }
                     });
                 } else {
                     // Normal single message

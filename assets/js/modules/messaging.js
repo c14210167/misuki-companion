@@ -105,6 +105,8 @@ function calculateTypingDuration(text, emotionTimeline) {
 // Send message
 export async function sendMessage() {
     const message = messageInput.value.trim();
+    const userInterrupted = false; 
+
     if (!message && !window.attachedFile) return;
 
     if (window.cancelSplitMessages) {
@@ -440,10 +442,14 @@ async function scheduleFollowUp(followUpCount) {
                     
                     addMessage('misuki', data.message, data.emotion_timeline);
                     updateMisukiMood(data.mood, data.mood_text);
-                    
+
+                    // 🔧 FIX: Save follow-up to database
+                    await saveFollowUpToDatabase(data.message, data.mood);
+
                     if (data.should_continue && followUpCount < 2) {
                         scheduleFollowUp(followUpCount + 1);
                     }
+                    
                 }
             } catch (error) {
                 console.error('Follow-up error:', error);
@@ -452,6 +458,25 @@ async function scheduleFollowUp(followUpCount) {
         }, 1000 + Math.random() * 1000);
         
     }, delay);
+}
+
+// 🔧 NEW: Save follow-up messages to database
+async function saveFollowUpToDatabase(message, mood) {
+    try {
+        await fetch('api/save_follow_up.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                user_id: 1,
+                misuki_message: message,
+                mood: mood || 'gentle'
+            })
+        });
+    } catch (error) {
+        console.error('Error saving follow-up:', error);
+    }
 }
 
 window.sendMessage = sendMessage;

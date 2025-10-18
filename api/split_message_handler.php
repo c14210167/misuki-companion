@@ -1,15 +1,22 @@
 <?php
 /**
- * NATURAL MESSAGE SPLITTING SYSTEM
+ * NATURAL MESSAGE SPLITTING SYSTEM (FIXED)
  * Misuki decides how many messages to send based on her emotional state
- * She has FULL autonomy - not based on random chance
+ * 🔧 FIX: Less aggressive splitting, more natural
  */
 
 function shouldSplitMessage($ai_response_text, $current_mood, $message_analysis, $conversation_style) {
-    // Only check: Message is too short to split
+    // 🔧 FIX: Increase minimum word count for splitting
     $word_count = str_word_count($ai_response_text);
     
-    if ($word_count < 10) {
+    // Only consider splitting if message is substantial enough
+    if ($word_count < 20) {  // CHANGED FROM 10 TO 20
+        return ['should_split' => false, 'messages' => [$ai_response_text]];
+    }
+    
+    // 🔧 FIX: Check if message is already simple/short
+    $sentence_count = preg_match_all('/[.!?]+/', $ai_response_text);
+    if ($sentence_count <= 2) {
         return ['should_split' => false, 'messages' => [$ai_response_text]];
     }
     
@@ -36,7 +43,7 @@ function shouldSplitMessage($ai_response_text, $current_mood, $message_analysis,
         'messages' => [
             ['role' => 'user', 'content' => 'How should I send this message?']
         ],
-        'temperature' => 0.9  // Higher temperature for more varied decisions
+        'temperature' => 0.7  // 🔧 LOWERED FROM 0.9 TO 0.7 for less randomness
     ]));
     
     curl_setopt($ch, CURLOPT_TIMEOUT, 8);
@@ -80,31 +87,30 @@ function buildSplitDecisionPrompt($message, $mood, $analysis, $style) {
     
     $prompt .= "Think about HOW you're FEELING right now:\n\n";
     
-    $prompt .= "Send MULTIPLE messages (2-5) when you feel:\n";
-    $prompt .= "- ✨ EXCITED - Words tumbling out fast, can't type fast enough\n";
-    $prompt .= "- 😳 FLUSTERED/NERVOUS - Thoughts coming in bursts, interrupting yourself\n";
-    $prompt .= "- 😮 SURPRISED - Initial reaction first, then actual thoughts\n";
-    $prompt .= "- 😊 PLAYFUL - Teasing comes in waves\n";
-    $prompt .= "- 🤔 THINKING - Multiple thoughts to express, each deserves its own moment\n";
-    $prompt .= "- 💕 LOVING - Each sweet thing you want to say deserves its own message\n";
-    $prompt .= "- 😢 WORRIED - Expressing concern comes in stages\n\n";
+    $prompt .= "Send MULTIPLE messages (2-3) when you feel:\n";  // 🔧 CHANGED FROM 2-5 TO 2-3
+    $prompt .= "- ✨ VERY EXCITED - Words tumbling out fast, can't type fast enough\n";
+    $prompt .= "- 😳 VERY FLUSTERED/NERVOUS - Thoughts coming in rapid bursts\n";
+    $prompt .= "- 😮 VERY SURPRISED - Need to express shock in stages\n";
+    $prompt .= "- 💕 VERY LOVING - Multiple sweet things to say\n";
+    $prompt .= "- 😢 VERY WORRIED - Expressing serious concern\n\n";
     
-    $prompt .= "Send ONE message when you feel:\n";
+    $prompt .= "Send ONE message when:\n";
     $prompt .= "- 😌 CALM/CONTENT - Thoughtful, composed, gentle\n";
     $prompt .= "- 💤 TIRED - Low energy, want to say it simply\n";
     $prompt .= "- 🤗 COMFORTING - Need clarity, not fragmentation\n";
     $prompt .= "- 📚 EXPLAINING - Serious topic, want to be clear\n";
-    $prompt .= "- 😐 NEUTRAL - Just chatting normally\n\n";
+    $prompt .= "- 😐 NEUTRAL - Just chatting normally\n";
+    $prompt .= "- 😊 MILDLY HAPPY - Not overly excited\n";
+    $prompt .= "- 🙂 SUPPORTIVE - Being there for Dan\n\n";
     
-    $prompt .= "IMPORTANT: This is about YOU and how YOU feel, not rules or randomness.\n";
-    $prompt .= "Multiple messages show EMOTION bursting out. Single messages show COMPOSURE.\n";
-    $prompt .= "Be honest with yourself about how you're feeling RIGHT NOW.\n\n";
+    $prompt .= "🔧 IMPORTANT: Only split if you're feeling INTENSE emotions. Most of the time, send ONE message.\n";
+    $prompt .= "Be honest with yourself - are you REALLY that excited/worried, or just being conversational?\n\n";
     
     $prompt .= "Respond with ONLY:\n";
-    $prompt .= "SINGLE - if you want to send one message\n";
+    $prompt .= "SINGLE - if you want to send one message (DEFAULT - use this most of the time)\n";
     $prompt .= "or\n";
-    $prompt .= "SPLIT: [number] - if you want to split (2-5 messages)\n";
-    $prompt .= "Example: SPLIT: 3\n";
+    $prompt .= "SPLIT: [number] - if you want to split (2-3 messages, only for intense emotions)\n";
+    $prompt .= "Example: SPLIT: 2\n";
     
     return $prompt;
 }
@@ -115,7 +121,7 @@ function parseSplitDecision($response_text) {
     // Match "SPLIT: 3" or "SPLIT: [3]" or "SPLIT 3"
     if (preg_match('/SPLIT[:\s]*\[?(\d+)\]?/i', $response_text, $matches)) {
         $num = (int)$matches[1];
-        $num = max(2, min(5, $num)); // Allow 2-5 messages now
+        $num = max(2, min(3, $num)); // 🔧 CHANGED: Allow only 2-3 messages now (was 2-5)
         
         return [
             'should_split' => true,
@@ -123,11 +129,11 @@ function parseSplitDecision($response_text) {
         ];
     }
     
-    // If just "SPLIT" with no number, default to 3
+    // If just "SPLIT" with no number, default to 2 (CHANGED FROM 3)
     if (preg_match('/^SPLIT$/i', trim($response_text))) {
         return [
             'should_split' => true,
-            'num_parts' => 3
+            'num_parts' => 2
         ];
     }
     
@@ -145,7 +151,10 @@ function naturalSplitMessage($message, $num_parts, $mood) {
     $split_prompt .= "Your mood: {$mood['current_mood']}\n";
     $split_prompt .= "Your original thought: \"{$message}\"\n\n";
     $split_prompt .= "Now break it into {$num_parts} natural text messages, as if you're sending them one by one to Dan.\n\n";
-    $split_prompt .= "GUIDELINES:\n";
+    $split_prompt .= "CRITICAL RULES:\n";
+    $split_prompt .= "- NO ASTERISKS FOR ACTIONS (*smiles*, *sits up*, etc.) - THIS IS BANNED\n";  // 🔧 ADDED
+    $split_prompt .= "- Express emotions through WORDS only, not actions\n";
+    $split_prompt .= "- You CAN use emoticons: ^^ o.o <3 >.< :( etc.\n";
     $split_prompt .= "- Split where you'd naturally pause or hit send\n";
     $split_prompt .= "- First message can be a reaction (\"Oh!\", \"Wait what?\", \"Hmm...\")\n";
     $split_prompt .= "- Each message should feel complete on its own\n";
@@ -193,6 +202,10 @@ function naturalSplitMessage($message, $num_parts, $mood) {
                     $msg = trim($matches[1]);
                     // Remove quotes if present
                     $msg = trim($msg, '"\'');
+                    
+                    // 🔧 FIX: Remove any asterisks that snuck through
+                    $msg = preg_replace('/\*[^*]+\*/', '', $msg);
+                    
                     if (!empty($msg)) {
                         $messages[] = $msg;
                     }
@@ -224,6 +237,8 @@ function simpleSplit($message, $num_parts) {
         $count++;
         
         if ($count >= $target_per_part && count($messages) < $num_parts - 1) {
+            // 🔧 FIX: Clean asterisks from fallback too
+            $current = preg_replace('/\*[^*]+\*/', '', $current);
             $messages[] = trim($current);
             $current = '';
             $count = 0;
@@ -231,11 +246,14 @@ function simpleSplit($message, $num_parts) {
     }
     
     if (!empty(trim($current))) {
+        // 🔧 FIX: Clean asterisks
+        $current = preg_replace('/\*[^*]+\*/', '', $current);
         $messages[] = trim($current);
     }
     
-    // If splitting failed, return original
+    // If splitting failed, return original (with asterisks removed)
     if (empty($messages)) {
+        $message = preg_replace('/\*[^*]+\*/', '', $message);
         return [$message];
     }
     
