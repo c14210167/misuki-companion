@@ -315,15 +315,89 @@ try {
     
     $result = json_decode($response, true);
     $response_text = $result['content'][0]['text'] ?? '';
-    
+
     if (shouldMakeTypo($current_mood, $misuki_status)) {
         $response_text = addNaturalTypo($response_text);
     }
-    
-    $emotion_timeline = parseEmotionsInMessage($response_text);
-    
-    // Save conversation
-    saveConversation($db, $user_id, $user_message, $response_text, $current_mood['current_mood'] ?? 'gentle');
+
+    // ===== MESSAGE SPLITTING LOGIC =====
+    $split_result = shouldSplitMessage(
+        $response_text, 
+        $current_mood, 
+        $message_analysis, 
+        $conversation_style
+    );
+
+    if ($split_result['should_split']) {
+        // Parse emotions for each split message
+        $emotion_timelines = [];
+        foreach ($split_result['messages'] as $msg) {
+            $emotion_timelines[] = parseEmotionsInMessage($msg);
+        }
+        
+        // Save first message
+        saveConversation($db, $user_id, $user_message, $split_result['messages'][0], $current_mood['current_mood'] ?? 'gentle');
+        
+        if (shouldSaveMemory($message_analysis)) {
+            saveMemory($db, $user_id, $user_message, $split_result['messages'][0], $message_analysis);
+        }
+        
+        updateMoodFromInteraction($db, $user_id, $message_analysis, $user_message);
+        updateConversationStyle($db, $user_id, $message_analysis);
+        updateRelationshipDynamics($db, $user_id, $user_message, $split_result['messages'][0]);
+        
+        $new_nickname = detectDanNicknameInResponse($split_result['messages'][0]);
+        if ($new_nickname) {
+            saveDanNickname($new_nickname);
+        }
+        
+        // Return split response
+        echo json_encode([
+            'response' => $split_result['messages'][0],
+            'mood' => $current_mood['current_mood'] ?? 'gentle',
+            'mood_text' => $current_mood['reason'] ?? 'Feeling gentle',
+            'emotion_timeline' => $emotion_timelines[0],
+            'is_split' => true,
+            'additional_messages' => array_slice($split_result['messages'], 1),
+            'emotion_timelines' => $emotion_timelines,
+            'closeness_level' => getRelationshipCloseness($db, $user_id),
+            'current_activity' => $current_activity ? $current_activity['activity'] : null,
+            'was_woken' => $misuki_status['was_woken'] ?? false
+        ]);
+        exit;
+        
+    } else {
+        // Single message path
+        $emotion_timeline = parseEmotionsInMessage($response_text);
+        
+        saveConversation($db, $user_id, $user_message, $response_text, $current_mood['current_mood'] ?? 'gentle');
+        
+        if (shouldSaveMemory($message_analysis)) {
+            saveMemory($db, $user_id, $user_message, $response_text, $message_analysis);
+        }
+        
+        updateMoodFromInteraction($db, $user_id, $message_analysis, $user_message);
+        updateConversationStyle($db, $user_id, $message_analysis);
+        updateRelationshipDynamics($db, $user_id, $user_message, $response_text);
+        
+        $new_nickname = detectDanNicknameInResponse($response_text);
+        if ($new_nickname) {
+            saveDanNickname($new_nickname);
+        }
+        
+        echo json_encode([
+            'response' => $response_text,
+            'mood' => $current_mood['current_mood'] ?? 'gentle',
+            'mood_text' => $current_mood['reason'] ?? 'Feeling gentle',
+            'emotion_timeline' => $emotion_timeline,
+            'is_split' => false,
+            'closeness_level' => getRelationshipCloseness($db, $user_id),
+            'current_activity' => $current_activity ? $current_activity['activity'] : null,
+            'was_woken' => $misuki_status['was_woken'] ?? false
+        ]);
+        exit;
+    }
+
     
     if (shouldSaveMemory($message_analysis)) {
         saveMemory($db, $user_id, $user_message, $response_text, $message_analysis);

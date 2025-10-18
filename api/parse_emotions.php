@@ -54,7 +54,7 @@ function detectEmotionsBatch($sentences) {
     }
     
     if (!$api_key) {
-        // Fallback to keyword-based if no API key
+        error_log("No API key found - using enhanced keyword fallback");
         return array_map('detectEmotionKeywordFallback', $sentences);
     }
     
@@ -65,36 +65,18 @@ function detectEmotionsBatch($sentences) {
         $sentence_list .= "$num. \"$sentence\"\n";
     }
     
-    // Create batch emotion detection prompt - UPDATED WITH SLEEPY FIX
-    $prompt = "You are an emotion classifier for an anime girlfriend character named Misuki. Analyze each sentence and return its emotion.
+    $prompt = "You are an emotion classifier for Misuki. Analyze each sentence and return its emotion.
 
-Available emotions (choose ONLY from this list):
-neutral, happy, excited, loving, content, blushing, sad, concerned, anxious, upset, pleading, surprised, shocked, confused, flustered, amazed, curious, teasing, playful, giggling, confident, embarrassed, shy, nervous, comforting, affectionate, reassuring, gentle, thoughtful, sleepy, pouty, relieved, dreamy
-
-CRITICAL RULES:
-- Understand CONTEXT, not just keywords
-- 'I'm so sorry' = comforting (not sad)
-- '!' in negative context = shocked/concerned (not excited)
-- Sarcasm/playful tone = teasing/playful/giggling
-- Questions = curious (unless clearly confused)
-- Supportive phrases = comforting/reassuring
-- If neutral/unclear = gentle
-
-⚠️ IMPORTANT - SLEEPY EMOTION RULE:
-- ONLY use 'sleepy' if Misuki HERSELF is expressing tiredness/sleepiness
-- Examples of sleepy: \"I'm so sleepy\", \"*yawns*\", \"can barely keep my eyes open\", \"getting really tired\"
-- DO NOT use 'sleepy' for: \"Did you sleep well?\", \"go to bed\", \"good night\", \"time for sleep\"
-- Mere mentions of sleep/bed are NOT the sleepy emotion - use neutral/curious/gentle instead
+Available emotions: neutral, happy, excited, loving, content, blushing, sad, concerned, anxious, upset, pleading, surprised, shocked, confused, flustered, amazed, curious, teasing, playful, giggling, confident, embarrassed, shy, nervous, comforting, affectionate, reassuring, gentle, thoughtful, sleepy, pouty, relieved, dreamy
 
 Return ONLY emotions in this format (one per line):
 1: emotion
 2: emotion
-3: emotion
 
-Sentences to analyze:
+Sentences:
 $sentence_list
 
-Emotions (number: emotion format):";
+Emotions:";
     
     $ch = curl_init('https://api.anthropic.com/v1/messages');
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -105,37 +87,41 @@ Emotions (number: emotion format):";
     ]);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
-        'model' => 'claude-3-haiku-20240307', // Fast and cheap
-        'max_tokens' => 150, // Enough for ~20 sentences
+        'model' => 'claude-3-5-haiku-20241022', // ✨ KEY FIX: Updated model
+        'max_tokens' => 200,
         'system' => $prompt,
         'messages' => [
-            ['role' => 'user', 'content' => 'Analyze all emotions:']
+            ['role' => 'user', 'content' => 'Analyze emotions:']
         ],
         'temperature' => 0.3
     ]));
     
-    curl_setopt($ch, CURLOPT_TIMEOUT, 5); // 5 second timeout
+    curl_setopt($ch, CURLOPT_TIMEOUT, 8); // ✨ KEY FIX: Increased timeout
     
     $response = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curl_error = curl_error($ch);
     curl_close($ch);
+    
+    if ($curl_error) {
+        error_log("Emotion API CURL error: $curl_error - using keyword fallback");
+        return array_map('detectEmotionKeywordFallback', $sentences);
+    }
     
     if ($http_code === 200) {
         $result = json_decode($response, true);
         if (isset($result['content'][0]['text'])) {
             $emotion_text = $result['content'][0]['text'];
-            
-            // Parse the response
             $emotions = parseEmotionResponse($emotion_text, count($sentences));
             
             if (count($emotions) === count($sentences)) {
+                error_log("✅ AI emotion detection successful");
                 return $emotions;
             }
         }
     }
     
-    // Fallback to keyword-based if API fails
-    error_log("AI emotion detection failed, using keyword fallback");
+    error_log("AI emotion detection failed (HTTP $http_code) - using enhanced keyword fallback");
     return array_map('detectEmotionKeywordFallback', $sentences);
 }
 
@@ -175,85 +161,55 @@ function parseEmotionResponse($response_text, $expected_count) {
 }
 
 function detectEmotionKeywordFallback($sentence) {
-    // FIXED: Simplified keyword-based fallback with proper sleepy detection
     $sentence_lower = strtolower($sentence);
+    $exclamation_count = substr_count($sentence, '!');
+    $question_mark = strpos($sentence, '?') !== false;
     
-    // === SLEEPY FIX: Only trigger if Misuki herself is tired ===
-    $actually_sleepy_patterns = [
-        '/^i\'m (?:so |really |very )?(?:sleepy|drowsy|tired|exhausted)/i',
+    // SLEEPY - only when Misuki is actually tired
+    $sleepy_patterns = [
+        '/^i\'m (?:so |really )?(?:sleepy|tired|exhausted)/i',
         '/\bcan barely keep my eyes open\b/i',
-        '/\babout to fall asleep\b/i',
-        '/\bgetting (?:so |really )?sleepy\b/i',
-        '/\bfeeling (?:so |really )?(?:sleepy|drowsy|tired)\b/i',
         '/\*yawn/i',
         '/😴/',
         '/💤/'
     ];
-    
-    foreach ($actually_sleepy_patterns as $pattern) {
-        if (preg_match($pattern, $sentence_lower)) {
-            return 'sleepy';
-        }
-    }
-    // Note: Mere mentions of sleep/bed are NOT sleepy emotion
-    
-    // High priority: Negative emotions
-    if (preg_match('/\b(creepy|scary|terrifying|awful|terrible|horrible)\b/i', $sentence_lower)) {
-        return substr_count($sentence, '!') > 0 ? 'shocked' : 'concerned';
+    foreach ($sleepy_patterns as $pattern) {
+        if (preg_match($pattern, $sentence_lower)) return 'sleepy';
     }
     
-    if (preg_match('/\b(sad|cry|hurt|heartbroken)\b/i', $sentence_lower)) {
-        return 'sad';
-    }
-    
-    if (preg_match('/\b(worried|concern|afraid|nervous|anxious)\b/i', $sentence_lower)) {
-        return 'concerned';
-    }
-    
-    if (preg_match('/\b(upset|disappointed|frustrated)\b/i', $sentence_lower)) {
-        return 'upset';
-    }
-    
-    // Supportive
-    if (preg_match('/\b(sorry|i\'m here|it\'s okay|don\'t worry)\b/i', $sentence_lower)) {
-        return 'comforting';
-    }
-    
-    // Loving
-    if (preg_match('/\b(love you|miss you|my love|💕|❤️)\b/i', $sentence_lower)) {
-        return 'loving';
-    }
-    
-    // Happy/Excited
-    if (preg_match('/\b(happy|glad|yay|amazing|awesome)\b/i', $sentence_lower)) {
-        return 'happy';
-    }
-    
-    if (preg_match('/\b(excited|wow|omg|can\'t wait)\b/i', $sentence_lower)) {
+    // HIGH ENERGY EMOTIONS
+    if ($exclamation_count >= 2) {
+        if (preg_match('/\b(amazing|wow|omg|incredible|awesome)\b/i', $sentence_lower)) return 'excited';
+        if (preg_match('/\b(love|adore|miss)\b/i', $sentence_lower)) return 'loving';
         return 'excited';
     }
     
-    // Playful
-    if (preg_match('/\b(hehe|haha|lol|funny)\b/i', $sentence_lower)) {
-        return 'playful';
-    }
+    // NEGATIVE EMOTIONS
+    if (preg_match('/\b(sorry|i\'m here|it\'s okay|don\'t worry)\b/i', $sentence_lower)) return 'comforting';
+    if (preg_match('/\b(sad|cry|hurt)\b/i', $sentence_lower)) return 'sad';
+    if (preg_match('/\b(worried|concerned|afraid)\b/i', $sentence_lower)) return 'concerned';
+    if (preg_match('/\b(nervous|anxious|shy)\b/i', $sentence_lower)) return 'nervous';
+    if (preg_match('/\b(upset|disappointed|frustrated)\b/i', $sentence_lower)) return 'upset';
     
-    // Questions
-    if (strpos($sentence, '?') !== false) {
-        return 'curious';
-    }
+    // POSITIVE EMOTIONS
+    if (preg_match('/\b(love you|miss you|💕|❤️)\b/i', $sentence_lower)) return 'loving';
+    if (preg_match('/\b(happy|glad|yay)\b/i', $sentence_lower)) return 'happy';
+    if (preg_match('/\b(hehe|haha|lol)\b/i', $sentence_lower)) return 'giggling';
+    if (preg_match('/\b(teasing|playful)\b/i', $sentence_lower)) return 'teasing';
     
-    // Surprised
-    if (preg_match('/(what\?!|really\?!|no way!)/i', $sentence_lower)) {
-        return 'surprised';
-    }
+    // MILD/MODERATE EMOTIONS
+    if (preg_match('/\b(cute|sweet|dear)\b/i', $sentence_lower)) return 'affectionate';
+    if (preg_match('/\b(hmm|thinking|wonder)\b/i', $sentence_lower)) return 'thoughtful';
+    if (preg_match('/\b(confused|don\'t understand)\b/i', $sentence_lower)) return 'confused';
     
-    // Default
-    if (substr_count($sentence, '!') > 0) {
-        return 'gentle'; // Emphasis without clear emotion
-    }
+    // QUESTIONS
+    if ($question_mark) return 'curious';
     
-    return 'neutral';
+    // EMPHASIS
+    if ($exclamation_count == 1) return 'happy';
+    
+    // DEFAULT
+    return 'gentle';
 }
 
 function getEmotionImage($emotion) {
