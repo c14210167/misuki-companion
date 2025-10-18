@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Direct API Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .box {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+        h1 { color: #667eea; }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            margin: 10px 0;
+        }
+        button:hover { opacity: 0.8; }
+        pre {
+            background: #263238;
+            color: #aed581;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 12px;
+        }
+        .error { color: #f44336; background: #ffebee; padding: 15px; border-radius: 5px; }
+        .success { color: #4caf50; background: #e8f5e9; padding: 15px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h1>🧪 Direct Chat API Test</h1>
+        <p>This calls api/chat.php exactly like your browser does</p>
+        
+        <button onclick="testChat()">💬 Send Test Message</button>
+        
+        <div id="result"></div>
+    </div>
+
+    <script>
+        async function testChat() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '<p>⏳ Sending message to Misuki...</p>';
+            
+            try {
+                console.log('Sending request to api/chat.php');
+                
+                const response = await fetch('api/chat.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: 'Hi Misuki!',
+                        user_id: 1,
+                        time_of_day: 'day',
+                        time_confused: false
+                    })
+                });
+                
+                console.log('Response status:', response.status);
+                console.log('Response headers:', response.headers);
+                
+                const contentType = response.headers.get('content-type');
+                console.log('Content-Type:', contentType);
+                
+                const text = await response.text();
+                console.log('Raw response text:', text);
+                
+                let html = '<h2>Response Details:</h2>';
+                html += '<p><strong>HTTP Status:</strong> ' + response.status + '</p>';
+                html += '<p><strong>Content-Type:</strong> ' + contentType + '</p>';
+                
+                if (response.status !== 200) {
+                    html += '<div class="error">';
+                    html += '<h3>❌ HTTP Error ' + response.status + '</h3>';
+                    html += '<p>The server returned an error.</p>';
+                    html += '<h4>Raw Response:</h4>';
+                    html += '<pre>' + text.substring(0, 2000) + '</pre>';
+                    html += '</div>';
+                    resultDiv.innerHTML = html;
+                    return;
+                }
+                
+                html += '<h3>Raw Response Text:</h3>';
+                html += '<pre>' + text.substring(0, 500) + (text.length > 500 ? '...' : '') + '</pre>';
+                
+                try {
+                    const json = JSON.parse(text);
+                    html += '<div class="success">';
+                    html += '<h3>✅ Valid JSON!</h3>';
+                    html += '<pre>' + JSON.stringify(json, null, 2) + '</pre>';
+                    
+                    if (json.response) {
+                        html += '<h3>🎉 Misuki says:</h3>';
+                        html += '<p style="font-size: 18px; font-weight: bold;">' + json.response + '</p>';
+                    } else if (json.error) {
+                        html += '<div class="error"><strong>Error:</strong> ' + json.error + '</div>';
+                    }
+                    html += '</div>';
+                    
+                } catch (e) {
+                    html += '<div class="error">';
+                    html += '<h3>❌ Invalid JSON</h3>';
+                    html += '<p><strong>JSON Parse Error:</strong> ' + e.message + '</p>';
+                    html += '<p>This means PHP outputted something before the JSON (probably an error)</p>';
+                    
+                    // Check if it's HTML (PHP error page)
+                    if (text.trim().startsWith('<')) {
+                        html += '<p><strong>⚠️ Response looks like HTML!</strong> This means PHP crashed and Apache showed an error page.</p>';
+                    }
+                    
+                    // Show first part of response to see what went wrong
+                    html += '<h4>First 1000 characters of response:</h4>';
+                    html += '<pre>' + text.substring(0, 1000) + '</pre>';
+                    html += '</div>';
+                }
+                
+                resultDiv.innerHTML = html;
+                
+            } catch (error) {
+                resultDiv.innerHTML = '<div class="error"><h3>❌ Network Error</h3><p>' + error.message + '</p></div>';
+                console.error('Error:', error);
+            }
+        }
+    </script>
+</body>
+</html>
