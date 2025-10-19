@@ -42,25 +42,26 @@ const moodImages = {
     dreamy: 'assets/images/misuki-dreamy.png'
 };
 
-// 🔧 MISSING FUNCTION - THIS IS WHAT WAS CAUSING THE ERROR!
 export function getEmotionImage(emotion) {
     return moodImages[emotion] || 'assets/images/misuki-neutral.png';
 }
 
-// Update Misuki's mood (image + text)
+// ✅ FIX #2: Update Misuki's mood (image + text) - FIXED to properly update emotion text
 export function updateMisukiMood(emotion, moodText) {
     const moodDisplay = document.querySelector('.misuki-mood-text');
     const misukiImage = document.querySelector('.misuki-image');
     
+    // ✅ FIX #2: Always update the text, even if moodText is not provided
     if (moodDisplay) {
-        moodDisplay.textContent = moodText || getEmotionText(emotion);
+        const displayText = moodText || getEmotionText(emotion);
+        moodDisplay.textContent = displayText;
+        console.log(`💡 Updated emotion text to: "${displayText}" (emotion: ${emotion})`);
     }
     
     if (misukiImage) {
         // Determine image path based on private mode
         let imagePath;
         if (window.isPrivateMode) {
-            // Use private folder images
             imagePath = `assets/images/misuki-private/${emotion}.png`;
             
             // Fallback to normal if private doesn't exist
@@ -77,7 +78,7 @@ export function updateMisukiMood(emotion, moodText) {
     }
 }
 
-// Get emotion display text
+// ✅ FIX #2: Get emotion display text - properly varied
 export function getEmotionText(emotion) {
     const emotionTexts = {
         neutral: 'Listening',
@@ -126,7 +127,6 @@ export function animateEmotions(emotion_timeline) {
     
     console.log(`😊 Animating ${emotion_timeline.length} emotions`);
     
-    // STEP 1: Calculate total words in the message
     let total_words = 0;
     for (let i = 0; i < emotion_timeline.length; i++) {
         total_words += emotion_timeline[i].word_count;
@@ -134,71 +134,39 @@ export function animateEmotions(emotion_timeline) {
     
     console.log(`📝 Total words: ${total_words}`);
     
-    // STEP 2: Filter out very short emotions (less than 5% of message)
-    const filtered = [];
-    for (let i = 0; i < emotion_timeline.length; i++) {
-        const percentage = (emotion_timeline[i].word_count / total_words) * 100;
-        
-        if (percentage >= 5) {
-            filtered.push(emotion_timeline[i]);
-        } else {
-            console.log(`⏭️ Skipping ${emotion_timeline[i].emotion} (${percentage.toFixed(1)}% - too short)`);
-        }
-    }
+    const filtered_timeline = emotion_timeline.filter(e => e.word_count >= 2);
     
-    // STEP 3: If message is very short (under 15 words), just use the longest/most important emotion
-    if (total_words < 15) {
-        let best = filtered[0];
-        let best_score = 0;
-        
-        for (let i = 0; i < filtered.length; i++) {
-            const score = filtered[i].word_count * 100;
-            if (score > best_score) {
-                best = filtered[i];
-                best_score = score;
-            }
-        }
-        
-        console.log(`🎯 Short message (${total_words} words) - single emotion: ${best.emotion}`);
-        updateMisukiMood(best.emotion, getEmotionText(best.emotion));
+    if (filtered_timeline.length === 0) {
+        console.log('⚠️ No emotions with enough words');
         return;
     }
     
-    // STEP 4: Fallback to last emotion if filtered is empty
-    if (filtered.length === 0) {
-        const lastEmotion = emotion_timeline[emotion_timeline.length - 1].emotion;
-        updateMisukiMood(lastEmotion, getEmotionText(lastEmotion));
-        console.log(`⚠️ All filtered - using last: ${lastEmotion}`);
-        return;
-    }
+    console.log(`✅ Filtered to ${filtered_timeline.length} emotions`);
     
-    // STEP 5: Single emotion = no animation
-    if (filtered.length === 1) {
-        updateMisukiMood(filtered[0].emotion, getEmotionText(filtered[0].emotion));
-        console.log(`✅ Single emotion: ${filtered[0].emotion}`);
-        return;
-    }
+    let elapsed_words = 0;
+    let current_emotion_index = 0;
     
-    console.log(`✅ Final: ${filtered.length} emotions`);
-    
-    // STEP 6: Animate
-    let currentIndex = 0;
-    
-    function changeExpression() {
-        if (currentIndex >= filtered.length) return;
+    const interval = setInterval(() => {
+        elapsed_words++;
         
-        const current = filtered[currentIndex];
-        const currentDuration = current.duration * 1000;
-        
-        updateMisukiMood(current.emotion, getEmotionText(current.emotion));
-        console.log(`😊 [${currentIndex + 1}/${filtered.length}] ${current.emotion} for ${(currentDuration/1000).toFixed(1)}s`);
-        
-        currentIndex++;
-        
-        if (currentIndex < filtered.length) {
-            setTimeout(changeExpression, currentDuration);
+        let accumulated_words = 0;
+        for (let i = 0; i <= current_emotion_index && i < filtered_timeline.length; i++) {
+            accumulated_words += filtered_timeline[i].word_count;
         }
-    }
-    
-    changeExpression();
+        
+        if (elapsed_words >= accumulated_words && current_emotion_index < filtered_timeline.length - 1) {
+            current_emotion_index++;
+            const newEmotion = filtered_timeline[current_emotion_index].emotion;
+            
+            // ✅ FIX #2: Update the mood text with the new emotion
+            updateMisukiMood(newEmotion, getEmotionText(newEmotion));
+            
+            console.log(`😊 Emotion changed to: ${newEmotion}`);
+        }
+        
+        if (elapsed_words >= total_words) {
+            clearInterval(interval);
+            console.log('✅ Emotion animation complete');
+        }
+    }, 800);
 }

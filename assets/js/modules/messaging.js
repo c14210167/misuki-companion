@@ -26,8 +26,9 @@ export function initializeMessaging() {
         window.userIsTyping = messageInput.value.trim().length > 0;
     });
     
+    // ✅ FIXED: Don't set userIsTyping to true on focus if chatbox is empty
     messageInput.addEventListener('focus', () => {
-        window.userIsTyping = true;
+        window.userIsTyping = messageInput.value.trim().length > 0;
     });
     
     messageInput.addEventListener('blur', () => {
@@ -105,17 +106,30 @@ function calculateTypingDuration(text, emotionTimeline) {
 // Send message
 export async function sendMessage() {
     const message = messageInput.value.trim();
-    const userInterrupted = false; 
 
     if (!message && !window.attachedFile) return;
 
-    if (window.cancelSplitMessages) {
-        window.cancelSplitMessages();
-        // Check if user sent a message while Misuki was about to send split messages
-        const userInterrupted = window.userIsTyping || window.userWasTypingDuringSplit;
-        window.userWasTypingDuringSplit = false; // Reset flag
+    // ✅ FIXED: Cancel ALL pending follow-ups when user sends a message
+    if (window.followUpTimeout) {
+        clearTimeout(window.followUpTimeout);
+        window.followUpTimeout = null;
+        console.log('🛑 User sent message - cancelled follow-up timeout');
+    }
+    
+    if (window.followUpCheckInterval) {
+        clearInterval(window.followUpCheckInterval);
+        window.followUpCheckInterval = null;
+        console.log('🛑 User sent message - cancelled follow-up check interval');
     }
 
+    // Cancel split messages
+    if (window.cancelSplitMessages) {
+        window.cancelSplitMessages();
+        console.log('🛑 Cancelled split messages');
+    }
+    
+    const userInterrupted = window.userWasTypingDuringSplit || false;
+    window.userWasTypingDuringSplit = false;
     window.lastUserMessageTime = Date.now();
 
     const timeOfDay = getTimeOfDay();
@@ -142,7 +156,7 @@ export async function sendMessage() {
             user_id: 1,
             time_of_day: timeOfDay,
             time_confused: timeConfused,
-            user_interrupted: userInterrupted  // ✨ NEW
+            user_interrupted: userInterrupted
         };
         
         if (window.attachedFile) {
@@ -201,7 +215,7 @@ async function handleSplitMessages(data) {
     
     let currentPart = 0;
     let nextMessageTimeout = null;
-    let userStartedTyping = false;  // Track if user typed during split
+    let userStartedTyping = false;
     
     function sendNextPart() {
         if (currentPart >= allMessages.length) return;
@@ -412,11 +426,38 @@ export function addMessageInstant(sender, text, timestamp) {
     chatMessages.appendChild(messageDiv);
 }
 
+// ✅ COMPLETELY REWRITTEN FOLLOW-UP SYSTEM
 async function scheduleFollowUp(followUpCount) {
-    const delay = 2000 + Math.random() * 3000;
+    // Clear any existing follow-up timers
+    if (window.followUpTimeout) {
+        clearTimeout(window.followUpTimeout);
+        window.followUpTimeout = null;
+    }
+    if (window.followUpCheckInterval) {
+        clearInterval(window.followUpCheckInterval);
+        window.followUpCheckInterval = null;
+    }
+
+    console.log('📅 Scheduling follow-up check...');
     
-    window.followUpTimeout = setTimeout(async () => {
-        if (window.userIsTyping) return;
+    const startTime = Date.now();
+    const MAX_WAIT_TIME = 30000; // 30 seconds max
+    const IDEAL_WAIT_TIME = 7000; // 7 seconds if not typing
+    
+    // Function to check if input has content
+    function hasInputContent() {
+        return messageInput && messageInput.value && messageInput.value.trim().length > 0;
+    }
+    
+    // Function to actually send the follow-up
+    async function sendFollowUp() {
+        // Clear all timers
+        if (window.followUpTimeout) clearTimeout(window.followUpTimeout);
+        if (window.followUpCheckInterval) clearInterval(window.followUpCheckInterval);
+        window.followUpTimeout = null;
+        window.followUpCheckInterval = null;
+        
+        console.log('💬 Sending follow-up message...');
         
         typingIndicator.classList.add('active');
         
@@ -438,29 +479,51 @@ async function scheduleFollowUp(followUpCount) {
                 typingIndicator.classList.remove('active');
                 
                 if (data.success) {
-                    if (window.userIsTyping) return;
-                    
-                    addMessage('misuki', data.message, data.emotion_timeline);
-                    updateMisukiMood(data.mood, data.mood_text);
+                    // Double-check user hasn't started typing while we were fetching
+                    if (!hasInputContent()) {
+                        addMessage('misuki', data.message, data.emotion_timeline);
+                        updateMisukiMood(data.mood, data.mood_text);
 
-                    // 🔧 FIX: Save follow-up to database
-                    await saveFollowUpToDatabase(data.message, data.mood);
+                        await saveFollowUpToDatabase(data.message, data.mood);
 
-                    if (data.should_continue && followUpCount < 2) {
-                        scheduleFollowUp(followUpCount + 1);
+                        if (data.should_continue && followUpCount < 2) {
+                            scheduleFollowUp(followUpCount + 1);
+                        }
+                    } else {
+                        console.log('⏸️ User started typing, cancelled follow-up');
                     }
-                    
                 }
             } catch (error) {
                 console.error('Follow-up error:', error);
                 typingIndicator.classList.remove('active');
             }
         }, 1000 + Math.random() * 1000);
+    }
+    
+    // ✅ NEW LOGIC: Check every second if we should send
+    window.followUpCheckInterval = setInterval(() => {
+        const elapsed = Date.now() - startTime;
         
-    }, delay);
+        // Check if user has typed anything in the input
+        const userIsTyping = hasInputContent();
+        
+        if (!userIsTyping && elapsed >= IDEAL_WAIT_TIME) {
+            // ✅ User is NOT typing AND 7 seconds passed → Send follow-up
+            console.log('✅ 7 seconds passed, user not typing → sending follow-up');
+            sendFollowUp();
+        } else if (elapsed >= MAX_WAIT_TIME) {
+            // ✅ 30 seconds passed → Send anyway
+            console.log('⏱️ 30 seconds passed → sending follow-up anyway');
+            sendFollowUp();
+        } else if (userIsTyping) {
+            console.log(`⏸️ User is typing... waiting (${Math.floor(elapsed/1000)}s/${MAX_WAIT_TIME/1000}s)`);
+        } else {
+            console.log(`⏳ Waiting... (${Math.floor(elapsed/1000)}s/${IDEAL_WAIT_TIME/1000}s)`);
+        }
+    }, 1000); // Check every second
 }
 
-// 🔧 NEW: Save follow-up messages to database
+// 🔧 Save follow-up messages to database
 async function saveFollowUpToDatabase(message, mood) {
     try {
         await fetch('api/save_follow_up.php', {

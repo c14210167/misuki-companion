@@ -17,187 +17,111 @@ export function typeMessageWithEmotions(bubbleId, fullText, emotion_timeline) {
     let currentSentenceStart = 0;
     let lastEmotionSet = '';
     let isBackspacing = false;
-    let hasBackspaced = false; // Only backspace once per message
+    let hasBackspaced = false;
     
     const beepSound = new Audio('assets/audio/misuki beep.mp3');
     beepSound.volume = 0.3;
     
+    // ✅ FIX #6: Slower typing speeds across the board (doubled all values for slower typing)
     function getTypingSpeed(emotion) {
         const speeds = {
-            'excited': 20, 'shocked': 15, 'amazed': 25,
-            'surprised': 30, 'playful': 35, 'giggling': 30,
-            'happy': 40, 'flustered': 25,
-            'neutral': 50, 'content': 50, 'gentle': 55, 'curious': 50,
-            'thoughtful': 70, 'confused': 75, 'concerned': 65,
-            'comforting': 60, 'reassuring': 60, 'affectionate': 65, 'loving': 70,
-            'sad': 90, 'upset': 85, 'pleading': 80, 'anxious': 95,
-            'nervous': 110, 'shy': 120, 'embarrassed': 115, 'blushing': 100,
-            'confident': 45, 'teasing': 40, 'sleepy': 130, 'pouty': 70,
-            'relieved': 65, 'dreamy': 85
+            'excited': 40, 'shocked': 30, 'amazed': 50,
+            'surprised': 60, 'playful': 70, 'giggling': 60,
+            'happy': 80, 'flustered': 50,
+            'neutral': 100, 'content': 100, 'gentle': 110, 'curious': 100,
+            'thoughtful': 140, 'confused': 150, 'concerned': 130,
+            'comforting': 120, 'reassuring': 120, 'affectionate': 130, 'loving': 140,
+            'sad': 180, 'upset': 170, 'pleading': 160, 'anxious': 190,
+            'nervous': 220, 'shy': 240, 'embarrassed': 230, 'blushing': 200,
+            'confident': 90, 'teasing': 80, 'sleepy': 260, 'pouty': 140,
+            'relieved': 130, 'dreamy': 170
         };
-        return speeds[emotion] || 50;
+        return speeds[emotion] || 100;
     }
     
     function shouldBackspace(emotion) {
-        // Only backspace if:
-        // 1. Haven't backspaced yet in this message
-        // 2. In a nervous/shy emotion
-        // 3. At the START of a word (so it makes sense)
-        // 4. Not too early in the message
-        const backspaceEmotions = ['nervous', 'shy', 'embarrassed', 'anxious', 'flustered'];
-        
-        if (!backspaceEmotions.includes(emotion)) return false;
         if (hasBackspaced) return false;
-        if (characterIndex < 10) return false; // Need at least some text
+        if (!['nervous', 'shy', 'embarrassed', 'anxious', 'flustered'].includes(emotion)) return false;
         
-        // Only backspace at word boundaries (after a space)
-        const currentText = bubble.textContent;
-        if (!currentText.endsWith(' ')) return false;
+        const nextChar = fullText[characterIndex];
+        if (!nextChar || nextChar === ' ') return false;
         
-        // Low chance - 8% when all conditions are met
-        return Math.random() < 0.08;
-    }
-    
-    function applyEmotionAnimation(emotion) {
-        const bubble = document.getElementById(bubbleId);
-        if (!bubble) return;
-        
-        bubble.className = bubble.className.split(' ').filter(c => !c.startsWith('emotion-')).join(' ');
-        bubble.classList.add(`emotion-${emotion}`);
-        
-        if (emotion === 'shocked' || emotion === 'surprised' || emotion === 'excited') {
-            triggerScreenShake();
-        }
-        
-        if (emotion === 'surprised' || emotion === 'shocked' || emotion === 'amazed') {
-            triggerFlash();
-        }
-        
-        if (emotion === 'sad' || emotion === 'upset' || emotion === 'crying') {
-            triggerBlur();
-        }
-    }
-    
-    function shouldPause(char, nextChar) {
-        if (char === '!' || char === '?') return 400;
-        if (char === '.' || char === '…') return 300;
-        if (char === ',' || char === ';') return 200;
-        if (char === '-' && nextChar === ' ') return 150;
-        return 0;
-    }
-    
-    function addTremorEffect(emotion) {
-        const tremorEmotions = ['nervous', 'anxious', 'scared', 'shy', 'embarrassed', 'flustered'];
-        if (tremorEmotions.includes(emotion)) {
-            bubble.classList.add('tremor');
-        } else {
-            bubble.classList.remove('tremor');
-        }
+        return Math.random() < 0.15;
     }
     
     function typeNextCharacter() {
         if (characterIndex >= fullText.length) {
-            bubble.classList.remove('tremor');
-            bubble.className = bubble.className.split(' ').filter(c => !c.startsWith('emotion-')).join(' ');
+            bubble.classList.remove('typing');
+            chatMessages.scrollTop = chatMessages.scrollHeight;
             return;
         }
         
-        let currentEmotion = 'neutral';
-        let charCount = 0;
-        
-        for (let i = 0; i < emotion_timeline.length; i++) {
-            const sentenceLength = emotion_timeline[i].sentence.length;
-            if (characterIndex >= charCount && characterIndex < charCount + sentenceLength) {
-                currentEmotion = emotion_timeline[i].emotion;
-                break;
-            }
-            charCount += sentenceLength + 1;
-        }
+        const currentEmotion = emotion_timeline[currentEmotionIndex]?.emotion || 'neutral';
         
         if (currentEmotion !== lastEmotionSet) {
+            bubble.className = 'message-bubble typing emotion-' + currentEmotion;
             updateMisukiMood(currentEmotion, getEmotionText(currentEmotion));
-            applyEmotionAnimation(currentEmotion);
             lastEmotionSet = currentEmotion;
         }
-        addTremorEffect(currentEmotion);
         
-        // Check if should backspace (only at word boundaries when nervous/shy)
         if (!isBackspacing && shouldBackspace(currentEmotion)) {
             isBackspacing = true;
-            hasBackspaced = true; // Mark that we've backspaced
+            hasBackspaced = true;
             
-            // Delete the last word (go back to previous space)
-            const currentText = bubble.textContent;
-            const words = currentText.trim().split(' ');
-            const wordsToKeep = words.slice(0, -1); // Remove last word
-            const backspaceTarget = wordsToKeep.join(' ') + (wordsToKeep.length > 0 ? ' ' : '');
+            const backspaceCount = Math.floor(Math.random() * 3) + 2;
+            let backspaced = 0;
             
-            function doBackspace() {
-                if (bubble.textContent.length > backspaceTarget.length) {
-                    bubble.textContent = bubble.textContent.slice(0, -1);
-                    characterIndex--;
-                    setTimeout(doBackspace, 50);
-                } else {
-                    // Done backspacing - pause before continuing
+            const backspaceInterval = setInterval(() => {
+                if (backspaced >= backspaceCount || characterIndex === currentSentenceStart) {
+                    clearInterval(backspaceInterval);
                     isBackspacing = false;
-                    setTimeout(typeNextCharacter, 300 + Math.random() * 400); // Nervous pause
+                    setTimeout(typeNextCharacter, 100);
+                    return;
                 }
-            }
-            
-            doBackspace();
+                
+                if (characterIndex > currentSentenceStart) {
+                    characterIndex--;
+                    bubble.textContent = fullText.substring(0, characterIndex);
+                    backspaced++;
+                }
+            }, 50);
             return;
         }
         
         const char = fullText[characterIndex];
         bubble.textContent += char;
-        chatMessages.scrollTop = chatMessages.scrollHeight;
-        
-        if (/[a-zA-Z0-9]/.test(char)) {
-            const beep = beepSound.cloneNode();
-            beep.volume = 0.3;
-            beep.play().catch(e => {});
-        }
-        
         characterIndex++;
         
-        const pauseTime = shouldPause(char, fullText[characterIndex]);
+        if (['.', '!', '?'].includes(char)) {
+            currentSentenceStart = characterIndex;
+            currentEmotionIndex = Math.min(currentEmotionIndex + 1, emotion_timeline.length - 1);
+        }
+        
+        if (char !== ' ' && char !== '\n') {
+            beepSound.currentTime = 0;
+            beepSound.play().catch(() => {});
+        }
+        
+        if (char === '!' && currentEmotion === 'excited') {
+            triggerScreenShake();
+        }
+        if (char === '?' && currentEmotion === 'shocked') {
+            triggerFlash();
+        }
+        
         const typingSpeed = getTypingSpeed(currentEmotion);
         
-        setTimeout(typeNextCharacter, typingSpeed + pauseTime);
-    }
-    
-    typeNextCharacter();
-}
-
-// Simple typing (fallback)
-export function typeMessage(bubbleId, text, emotion = 'neutral') {
-    const bubble = document.getElementById(bubbleId);
-    if (!bubble) return;
-    
-    let index = 0;
-    const speed = 50;
-    
-    const beepSound = new Audio('assets/audio/misuki beep.mp3');
-    beepSound.volume = 0.3;
-    
-    function type() {
-        if (index < text.length) {
-            const char = text[index];
-            bubble.textContent += char;
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-            
-            if (/[a-zA-Z0-9]/.test(char)) {
-                const beep = beepSound.cloneNode();
-                beep.volume = 0.3;
-                beep.play().catch(e => {});
-            }
-            
-            index++;
-            
-            const pauseTime = text[index - 1] === '.' || text[index - 1] === '!' || text[index - 1] === '?' ? 300 : 0;
-            setTimeout(type, speed + pauseTime);
+        let delay = typingSpeed;
+        if (['.', '!', '?'].includes(char)) {
+            delay += 300;
+        } else if ([',', ';', ':'].includes(char)) {
+            delay += 150;
         }
+        
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        setTimeout(typeNextCharacter, delay);
     }
     
-    type();
+    bubble.className = 'message-bubble typing';
+    typeNextCharacter();
 }

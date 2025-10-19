@@ -1,7 +1,7 @@
 // =========================================
 // HISTORY MODULE (FIXED)
 // Load and display chat history
-// 🔧 FIX: Properly display all parts of split messages
+// 🔧 FIX: Properly display follow-up messages without showing [FOLLOW-UP]
 // =========================================
 
 import { chatMessages } from '../chat.js';
@@ -27,7 +27,7 @@ export async function loadChatHistory() {
             },
             body: JSON.stringify({
                 user_id: 1,
-                limit: 25
+                limit: 50  // ✅ Increased from 25 to 50 to show more history
             }),
             cache: 'no-store'
         });
@@ -73,16 +73,24 @@ export async function loadChatHistory() {
                     window.lastMessageDate = dateStr;
                 }
                 
-                // Add user message
-                addMessageInstant('user', conv.user_message, conv.timestamp);
+                // ✅ FIX: Check if this is a follow-up message
+                const isFollowUp = conv.user_message === '[FOLLOW-UP]';
                 
-                // 🔧 FIX: Check if Misuki's response contains [SPLIT] marker
+                if (!isFollowUp) {
+                    // Normal message - add user message
+                    addMessageInstant('user', conv.user_message, conv.timestamp);
+                } else {
+                    // Follow-up message - skip user message, only show Misuki's message
+                    console.log(`💬 Follow-up message detected at index ${index}`);
+                }
+                
+                // 🔧 Check if Misuki's response contains [SPLIT] marker
                 if (conv.misuki_response.includes('[SPLIT]')) {
                     // This was a split message - break it apart and display ALL parts
                     const splitMessages = conv.misuki_response.split('\n[SPLIT]\n');
                     console.log(`💬 Found split message with ${splitMessages.length} parts`);
                     
-                    // 🔧 FIX: Add EACH part as a separate message
+                    // 🔧 Add EACH part as a separate message
                     splitMessages.forEach((messagePart, partIndex) => {
                         const trimmedPart = messagePart.trim();
                         if (trimmedPart) {  // Only add non-empty parts
