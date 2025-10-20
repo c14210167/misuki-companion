@@ -12,7 +12,7 @@ require_once '../config/database.php';
 
 $input = json_decode(file_get_contents('php://input'), true);
 $user_id = $input['user_id'] ?? 1;
-$limit = $input['limit'] ?? 25; // 🔧 CHANGED DEFAULT FROM 200 TO 25
+$limit = $input['limit'] ?? 50; // 🔧 CHANGED DEFAULT FROM 200 TO 25
 
 try {
     $db = getDBConnection();

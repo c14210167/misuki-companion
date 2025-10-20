@@ -38,7 +38,7 @@ async function connectDB() {
 }
 
 // Get user's conversation history
-async function getConversationHistory(userId, limit = 10) {
+async function getConversationHistory(userId, limit = 50) {
     const [rows] = await db.execute(
         `SELECT user_message, misuki_response, timestamp 
          FROM conversations 
@@ -444,46 +444,39 @@ function getCatGifLibrary() {
             'https://tenor.com/view/giggling-kicking-feet-sped-up-asagao-to-kase-san-yuri-gif-7086509730415310709',
             'https://tenor.com/view/oki-mi-mesu-mama-eve-utaite-eve-eve-mv-dance-gif-17240223',
             'https://tenor.com/view/kaoruko-waguri-kaoruko-kaoru-hana-wa-rin-to-saku-waguri-kaoruko-the-fragrant-flower-blooms-with-dignity-gif-5607173778587031559',
-            'https://media.giphy.com/media/BzyTuYCmvSORqs1ABM/giphy.gif',
-            'https://media.giphy.com/media/lJNoBCvQYp7nq/giphy.gif'
+            'https://tenor.com/view/konata-izumi-konata-lucky-star-baim-bubble-text-gif-17082636234135541106'
         ],
         
         // Love/affection
         love: [
             'https://tenor.com/view/blushing-surprised-anime-spy-x-family-gif-433404383859936258',
             'https://tenor.com/view/kase-kase-san-kase-san-to-yamada-kase-san-and-morning-glories-yamada-gif-11853392889042453065',
-            'https://tenor.com/view/dragon-maid-tohru-love-hearts-anime-gif-16971554499450039728',
-            'https://media.giphy.com/media/lJNoBCvQYp7nq/giphy.gif',
-            'https://media.giphy.com/media/3o6Mbbs879ozZ77jTW/giphy.gif'
+            'https://tenor.com/view/dragon-maid-tohru-love-hearts-anime-gif-16971554499450039728'
         ],
         affectionate: [
             'https://tenor.com/view/excel-saga-excel-love-anime-blush-gif-21295604',
-            'https://tenor.com/view/mika-mikaela-hyakuya-owari-no-gif-7419864',
-            'https://media.giphy.com/media/11s7Ke7jcNxCHS/giphy.gif'
+            'https://tenor.com/view/mika-mikaela-hyakuya-owari-no-gif-7419864'
         ],
         
         // Sad emotions
         sad: [
-            'https://tenor.com/view/chainsaw-man-pochita-cute-adorable-cry-gif-26990247',
-            'https://media.giphy.com/media/14ut8PhnIwzros/giphy.gif',
-            'https://media.giphy.com/media/cFdHXXm5GhJsc/giphy.gif',
-            'https://media.giphy.com/media/3o6Mbbs879ozZ77jTW/giphy.gif',
-            'https://media.giphy.com/media/BEob5qwFkSJ7G/giphy.gif'
+            'https://tenor.com/view/chainsaw-man-pochita-cute-adorable-cry-gif-26990247'
         ],
         upset: [
-            'https://tenor.com/view/anime-bubble-sad-gif-9840505378859916279',
-            'https://media.giphy.com/media/cFdHXXm5GhJsc/giphy.gif',
-            'https://media.giphy.com/media/L1VRSg45sUqY0/giphy.gif'
+            'https://tenor.com/view/anime-bubble-sad-gif-9840505378859916279'
         ],
         
         // Sleepy/tired
         sleepy: [
             'https://tenor.com/view/woahm-anime-girl-anime-girl-anime-girl-sleepy-gif-1859288045321179131',
             'https://tenor.com/view/sleepy-nichijou-tired-yawn-wipe-eyes-gif-16309858',
-            'https://media.giphy.com/media/13CoXDiaCcCoyk/giphy.gif',
-            'https://media.giphy.com/media/euuaEzeFl6Spy/giphy.gif',
-            'https://media.giphy.com/media/jpbnoe3UIa8TU8LM13/giphy.gif'
+            'https://tenor.com/view/lucky-star-yawn-tired-sleepy-sleep-gif-8472935',
+            'https://tenor.com/view/anime-sleep-gif-19525636',
+            'https://tenor.com/view/anya-spy-x-family-sleepy-drowsy-falling-asleep-gif-25742887',
+            'https://tenor.com/view/revy-sleep-black-lagoon-meme-anime-gif-364443035062544487',
+            'https://tenor.com/view/goodnight-good-night-aragotha-aragotha-stoneworks-sleep-gif-3392597623094032746'
         ],
+
         tired: [
             'https://tenor.com/view/tired-anime-funny-gif-5634642',
             'https://tenor.com/view/tonagura-kagura-yuuji-tired-dying-dead-inside-gif-5767153070648308092',
@@ -495,22 +488,19 @@ function getCatGifLibrary() {
             'https://tenor.com/view/himekwo-himeko-twitchtvhimekwo-vtuber-cute-gif-14695939017477631077',
             'https://tenor.com/view/cat-huh-cat-huh-etr-gif-15332443943609734737',
             'https://tenor.com/view/jinx-cat-huh-confused-meme-gif-3282660700962977407',
-            'https://tenor.com/view/cat-cat-turning-head-confused-cat-rizalalthur-orange-cat-behavior-gif-10491959385063137392'
+            'https://tenor.com/view/cat-cat-turning-head-confused-cat-rizalalthur-orange-cat-behavior-gif-10491959385063137392',
+            'https://tenor.com/view/shirogane-anime-funny-what-huh-gif-2189181305159165492'
         ],
         curious: [
             'https://tenor.com/view/cat-curious-cat-sniffing-cat-investigating-cat-cute-cat-gif-7346632064287981595',
-            'https://tenor.com/view/cat-curious-cat-sniffing-cat-investigating-cat-cute-cat-gif-7346632064287981595',
-            'https://media.giphy.com/media/CqVNwrLt9KEDK/giphy.gif'
+            'https://tenor.com/view/cat-curious-cat-sniffing-cat-investigating-cat-cute-cat-gif-7346632064287981595'
         ],
         
         // Working/studying
         working: [
-            'https://tenor.com/view/anime-anime-girl-krusty-krab-spongebob-cashier-gif-21464092',
-            'https://media.giphy.com/media/o0vwzuFwCGAFO/giphy.gif',
-            'https://media.giphy.com/media/nR4L10XlJcSeQ/giphy.gif',
-            'https://media.giphy.com/media/M90mJvfWfd5mbUuULX/giphy.gif',
-            'https://media.giphy.com/media/VbnUQpnihPSIgIXuZv/giphy.gif'
+            'https://tenor.com/view/anime-anime-girl-krusty-krab-spongebob-cashier-gif-21464092'
         ],
+
         studying: [
             'https://tenor.com/view/nerd-plink-glasses-side-eye-smart-gif-11422187893182432522',
             'https://tenor.com/view/favorite-gif-20845610'
@@ -518,11 +508,9 @@ function getCatGifLibrary() {
         
         // Playful/teasing
         playful: [
-            'https://tenor.com/view/angry-anime-cute-anime-girl-chibi-gif-1474030282084313143',
-            'https://media.giphy.com/media/ICOgUNjpvO0PC/giphy.gif',
-            'https://media.giphy.com/media/3oriO0OEd9QIDdllqo/giphy.gif',
-            'https://media.giphy.com/media/FWcoE5AkG3BRe/giphy.gif'
+            'https://tenor.com/view/angry-anime-cute-anime-girl-chibi-gif-1474030282084313143'
         ],
+
         teasing: [
             'https://tenor.com/view/anime-gif-2599527146718057057',
             'https://tenor.com/view/anime-anime-girl-akebi-chan-akebi-sailor-uniform-akebi-chan-no-sailorfuku-gif-24544781',
@@ -536,14 +524,16 @@ function getCatGifLibrary() {
             'https://tenor.com/view/marin-marin-kitagawa-kitagawa-bisque-bisque-doll-gif-916671610781629467',
             'https://tenor.com/view/corada-gif-10410685721708433315'
         ],
+
         nervous: [
-            'https://media.giphy.com/media/3o6Mbbs879ozZ77jTW/giphy.gif',
-            'https://media.giphy.com/media/L1VRSg45sUqY0/giphy.gif',
-            'https://media.giphy.com/media/VbnUQpnihPSIgIXuZv/giphy.gif'
+            'https://tenor.com/view/kaguya-kaguya-love-is-war-chika-sweating-gif-22020682',
+            'https://tenor.com/view/dainanaouji-seventh-prince-7th-prince-anime-tao-gif-7486748791991180876'
         ],
+
         embarrassed: [
             'https://tenor.com/view/my-hero-academia-anime-suneater-shame-shamed-gif-23583798',
-            'https://media.giphy.com/media/3o6Mbbs879ozZ77jTW/giphy.gif'
+            'https://tenor.com/view/waguri-the-fragrant-flower-blooms-with-dignity-kaoru-hana-wa-rin-to-saku-kaoruko-kaoruko-waguri-gif-656942706865824044',
+            'https://tenor.com/view/blush-anime-embarrassed-gif-13768377'
         ],
         
         // Surprised/shocked
@@ -556,9 +546,9 @@ function getCatGifLibrary() {
         // Content/relaxed
         content: [
             'https://tenor.com/view/anime-drinking-sigh-breath-kanna-kamui-gif-15819577',
-            'https://tenor.com/view/hiro-chill-darling-in-the-franxx-beach-relaxed-gif-17206604',
-            'https://media.giphy.com/media/ICOgUNjpvO0PC/giphy.gif'
+            'https://tenor.com/view/hiro-chill-darling-in-the-franxx-beach-relaxed-gif-17206604'
         ],
+
         relaxed: [
             'https://tenor.com/view/precure-kururun-tropical-rouge-precure-seal-anime-gif-22389448',
             'https://tenor.com/view/relaxed-cat-fashion-love-pet-gif-22308133',
