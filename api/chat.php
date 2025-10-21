@@ -20,6 +20,7 @@ require_once 'reminder_handler.php';
 require_once 'split_message_handler.php';
 require_once 'nickname_handler.php';
 require_once 'core_memory_handler.php';
+require_once 'private_mode_handler.php'; 
 
 $input = json_decode(file_get_contents('php://input'), true);
 $user_message = $input['message'] ?? '';
@@ -80,12 +81,60 @@ try {
                 'mood' => 'happy',
                 'mood_text' => 'Happy to help',
                 'emotion_timeline' => $emotion_timeline,
-                'reminder_set' => true
+                'reminder_set' => true,
+                'private_mode' => $is_private_mode
             ]);
             
             saveConversation($db, $user_id, $user_message, $response_text, 'happy');
             exit;
         }
+    }
+
+        // ✅ STEP 1.5: CHECK PRIVATE MODE (NEW!)
+    $is_private_mode = getPrivateMode($user_id);
+    $private_mode_context = '';
+
+    // Detect if user wants to START private mode
+    if (detectPrivateModeStart($user_message)) {
+        setPrivateMode($user_id, true);
+        $response_text = generatePrivateModeStartResponse();
+        $emotion_timeline = parseEmotionsInMessage($response_text);
+        
+        echo json_encode([
+            'response' => $response_text,
+            'mood' => 'blushing',
+            'mood_text' => 'Feeling intimate',
+            'emotion_timeline' => $emotion_timeline,
+            'private_mode' => true,
+            'private_mode_started' => true
+        ]);
+        
+        saveConversation($db, $user_id, $user_message, $response_text, 'blushing');
+        exit;
+    }
+
+    // Detect if user wants to END private mode
+    if (detectPrivateModeEnd($user_message)) {
+        setPrivateMode($user_id, false);
+        $response_text = generatePrivateModeEndResponse();
+        $emotion_timeline = parseEmotionsInMessage($response_text);
+        
+        echo json_encode([
+            'response' => $response_text,
+            'mood' => 'content',
+            'mood_text' => 'Feeling loved',
+            'emotion_timeline' => $emotion_timeline,
+            'private_mode' => false,
+            'private_mode_ended' => true
+        ]);
+        
+        saveConversation($db, $user_id, $user_message, $response_text, 'content');
+        exit;
+    }
+
+    // If currently in private mode, build context
+    if ($is_private_mode) {
+        $private_mode_context = buildPrivateModeContext();
     }
     
     // STEP 2: Check for nickname
@@ -101,7 +150,8 @@ try {
             'mood' => 'happy',
             'mood_text' => 'Feeling special',
             'emotion_timeline' => $emotion_timeline,
-            'nickname_set' => true
+            'nickname_set' => true,
+            'private_mode' => $is_private_mode
         ]);
         
         saveConversation($db, $user_id, $user_message, $nickname_response, 'happy');
@@ -286,6 +336,9 @@ try {
     $context .= $location_context;
     $context .= $nickname_context;
     $context .= $core_memory_context;
+
+    $context .= $time_context;           // ✅ NEW - fixes timezone bug
+    $context .= $private_mode_context;   // ✅ NEW - adds private mode context
     
     if ($file_content) {
         $context .= "\n\n=== UPLOADED FILE ===\n";
@@ -411,7 +464,8 @@ try {
             'emotion_timelines' => $emotion_timelines,
             'closeness_level' => getRelationshipCloseness($db, $user_id),
             'current_activity' => $current_activity ? $current_activity['activity'] : null,
-            'was_woken' => $misuki_status['was_woken'] ?? false
+            'was_woken' => $misuki_status['was_woken'] ?? false,
+            'private_mode' => $is_private_mode
         ]);
         exit;
         
@@ -442,7 +496,8 @@ try {
             'is_split' => false,
             'closeness_level' => getRelationshipCloseness($db, $user_id),
             'current_activity' => $current_activity ? $current_activity['activity'] : null,
-            'was_woken' => $misuki_status['was_woken'] ?? false
+            'was_woken' => $misuki_status['was_woken'] ?? false,
+            'private_mode' => $is_private_mode
         ]);
         exit;
     }
@@ -469,7 +524,8 @@ try {
         'has_split' => false,
         'closeness_level' => getRelationshipCloseness($db, $user_id),
         'current_activity' => $current_activity ? $current_activity['activity'] : null,
-        'was_woken' => $misuki_status['was_woken'] ?? false
+        'was_woken' => $misuki_status['was_woken'] ?? false,
+        'private_mode' => $is_private_mode
     ]);
     
 } catch (Exception $e) {
@@ -482,7 +538,8 @@ try {
         'mood' => 'gentle',
         'mood_text' => 'A bit confused',
         'emotion_timeline' => [],
-        'error' => true
+        'error' => true,
+        'private_mode' => $is_private_mode
     ]);
 }
 
