@@ -254,6 +254,8 @@ try {
             if ($current_activity) {
                 $activity_context = "\n\n=== YOUR CURRENT ACTIVITY (IMPORTANT!) ===\n";
                 $activity_context .= "Right now in Japan, you're: " . $current_activity['activity'] . "\n";
+                $activity_context .= "\n🚨 CRITICAL: When Dan asks what you're doing, you MUST mention this activity!\n";
+                $activity_context .= "Do NOT say you're doing something different!\n";
                 
                 if (isset($current_activity['location'])) {
                     $activity_context .= "Location: " . $current_activity['location'] . "\n";

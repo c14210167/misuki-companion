@@ -1,11 +1,11 @@
 // =========================================
-// EMOTIONS MODULE
+// EMOTIONS MODULE - FIXED FOR PRIVATE MODE
 // Handles emotion animations and mood updates
 // =========================================
 
 import { misukiImage, misukiMood } from '../chat.js';
 
-// Mood images mapping
+// Mood images mapping (normal mode)
 const moodImages = {
     neutral: 'assets/images/misuki-neutral.png',
     happy: 'assets/images/misuki-happy.png',
@@ -43,34 +43,50 @@ const moodImages = {
 };
 
 export function getEmotionImage(emotion) {
+    // ✅ FIX: Check if we're in private mode
+    if (window.isPrivateMode) {
+        const privatePath = `assets/images/misuki-private/${emotion}.png`;
+        console.log(`🔒 Private mode: Using ${privatePath}`);
+        return privatePath;
+    }
+    
     return moodImages[emotion] || 'assets/images/misuki-neutral.png';
 }
 
-// ✅ FIX #2: Update Misuki's mood (image + text) - FIXED to properly update emotion text
+// ✅ FIX: Update Misuki's mood (image + text) - properly handles private mode
 export function updateMisukiMood(emotion, moodText) {
     const moodDisplay = document.querySelector('.misuki-mood-text');
     const misukiImage = document.querySelector('.misuki-image');
     
-    // ✅ FIX #2: Always update the text, even if moodText is not provided
+    console.log(`😊 Updating mood to: ${emotion} (Private mode: ${window.isPrivateMode})`);
+    
+    // ✅ Always update the text
     if (moodDisplay) {
         const displayText = moodText || getEmotionText(emotion);
         moodDisplay.textContent = displayText;
-        console.log(`💡 Updated emotion text to: "${displayText}" (emotion: ${emotion})`);
+        console.log(`💡 Updated emotion text to: "${displayText}"`);
     }
     
     if (misukiImage) {
-        // Determine image path based on private mode
+        // ✅ FIX: Determine image path based on private mode
         let imagePath;
+        
         if (window.isPrivateMode) {
+            // Try private folder first
             imagePath = `assets/images/misuki-private/${emotion}.png`;
+            console.log(`🔒 Attempting private image: ${imagePath}`);
             
             // Fallback to normal if private doesn't exist
             misukiImage.onerror = function() {
-                this.onerror = null;
-                this.src = getEmotionImage(emotion);
+                console.log(`⚠️ Private image not found, falling back to normal`);
+                this.onerror = null; // Prevent infinite loop
+                this.src = moodImages[emotion] || 'assets/images/misuki-neutral.png';
             };
         } else {
+            // Use normal images
             imagePath = getEmotionImage(emotion);
+            console.log(`📷 Using normal image: ${imagePath}`);
+            misukiImage.onerror = null; // Clear error handler
         }
         
         misukiImage.src = imagePath;
@@ -78,7 +94,7 @@ export function updateMisukiMood(emotion, moodText) {
     }
 }
 
-// ✅ FIX #2: Get emotion display text - properly varied
+// ✅ Get emotion display text
 export function getEmotionText(emotion) {
     const emotionTexts = {
         neutral: 'Listening',
@@ -158,7 +174,7 @@ export function animateEmotions(emotion_timeline) {
             current_emotion_index++;
             const newEmotion = filtered_timeline[current_emotion_index].emotion;
             
-            // ✅ FIX #2: Update the mood text with the new emotion
+            // ✅ Update the mood with the new emotion
             updateMisukiMood(newEmotion, getEmotionText(newEmotion));
             
             console.log(`😊 Emotion changed to: ${newEmotion}`);

@@ -5,6 +5,8 @@ FIXES NEEDED
 > Misuki always responds with 3 messages. Is that what she wants? There's this one occasion when she responds with 4 messages, though. If 3 messages back to back is what she wants, then i guess there's no need to fix anything.
 > The reminder doesnt work
 > Make misuki remember the nicknames i gave her, maybe store it in a txt file
+> Make misuki remember the nicknames she gave me
+> Make misuki remember the things I said to her, things that she consider important. Store it in a new txt file called CoreMemories.txt in the root folder, and this CAN change. DO NOT put everything in there because referencing all memories will be demanding, so only put things she consider important.
 
 THINGS TO ADD
 Misuki has different folders for different clothes for different occasions.
@@ -15,3 +17,4 @@ Misuki has clothes for when she wants to:
 
 Make a txt file for core memories, but ensure that it works even if there's a lot inside
 Misuki should be able to send selfies (pre-made)
+Adding 

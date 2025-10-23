@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔍 Misuki Debug Tool</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 900px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-box {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background: #5568d3;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeeba;
+        }
+        pre {
+            background: #263238;
+            color: #aed581;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        h1 {
+            color: #667eea;
+        }
+        h2 {
+            color: #764ba2;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔍 Misuki API Debugger</h1>
+    <p>This tool will help us find out why Misuki can't respond.</p>
+
+    <div class="test-box">
+        <h2>Test 1: Simple API Call</h2>
+        <button onclick="testSimple()">Test Basic Connection</button>
+        <div id="simpleResult"></div>
+    </div>
+
+    <div class="test-box">
+        <h2>Test 2: Full Chat API</h2>
+        <button onclick="testFull()">Test Full Chat Flow</button>
+        <div id="fullResult"></div>
+    </div>
+
+    <div class="test-box">
+        <h2>Test 3: Check Network Tab</h2>
+        <p>1. Open your browser's Developer Tools (F12)</p>
+        <p>2. Go to the "Network" tab</p>
+        <p>3. Click the button below and watch for the request</p>
+        <button onclick="testNetwork()">Send Test Message</button>
+        <div id="networkResult"></div>
+        <p><strong>Look for:</strong></p>
+        <ul>
+            <li>Red status code = Server error</li>
+            <li>Status 500 = PHP error</li>
+            <li>Status 404 = File not found</li>
+            <li>Status 200 = Success (but check response)</li>
+        </ul>
+    </div>
+
+    <script>
+        async function testSimple() {
+            const resultDiv = document.getElementById('simpleResult');
+            resultDiv.innerHTML = '<p>Testing...</p>';
+            
+            try {
+                const response = await fetch('api/chat.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: 'hi',
+                        user_id: 1,
+                        time_of_day: 'day',
+                        time_confused: false
+                    })
+                });
+                
+                const statusCode = response.status;
+                const responseText = await response.text();
+                
+                let html = '<div class="result ';
+                
+                if (statusCode === 200) {
+                    html += 'success">✅ <strong>Status 200 OK!</strong><br>';
+                    
+                    try {
+                        const json = JSON.parse(responseText);
+                        html += '<br><strong>Response looks valid!</strong><br>';
+                        html += '<pre>' + JSON.stringify(json, null, 2) + '</pre>';
+                        
+                        if (json.response) {
+                            html += '<br><strong>Misuki says:</strong> ' + json.response;
+                        }
+                    } catch (e) {
+                        html += 'error">❌ <strong>Status 200 but Invalid JSON!</strong><br>';
+                        html += '<p>This means PHP is outputting something before the JSON.</p>';
+                        html += '<p><strong>Raw response:</strong></p>';
+                        html += '<pre>' + responseText.substring(0, 500) + '</pre>';
+                    }
+                } else if (statusCode === 500) {
+                    html += 'error">❌ <strong>Status 500 - PHP Error!</strong><br>';
+                    html += '<p>There\'s a PHP error in chat.php. Check your server error logs.</p>';
+                    html += '<pre>' + responseText.substring(0, 500) + '</pre>';
+                } else if (statusCode === 404) {
+                    html += 'error">❌ <strong>Status 404 - File Not Found!</strong><br>';
+                    html += '<p>api/chat.php doesn\'t exist or path is wrong.</p>';
+                } else {
+                    html += 'error">❌ <strong>Status ' + statusCode + '</strong><br>';
+                    html += '<pre>' + responseText.substring(0, 500) + '</pre>';
+                }
+                
+                html += '</div>';
+                resultDiv.innerHTML = html;
+                
+            } catch (error) {
+                resultDiv.innerHTML = '<div class="result error">❌ <strong>Network Error!</strong><br>' + 
+                    'Error: ' + error.message + '<br><br>' +
+                    '<p>Possible causes:</p>' +
+                    '<ul>' +
+                    '<li>CORS issue</li>' +
+                    '<li>Server not running</li>' +
+                    '<li>Wrong URL</li>' +
+                    '</ul></div>';
+            }
+        }
+        
+        async function testFull() {
+            const resultDiv = document.getElementById('fullResult');
+            resultDiv.innerHTML = '<p>Testing full chat flow...</p>';
+            
+            try {
+                const response = await fetch('api/chat.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: 'Hello Misuki, this is a test!',
+                        user_id: 1,
+                        time_of_day: 'afternoon',
+                        time_confused: false
+                    })
+                });
+                
+                const data = await response.json();
+                
+                let html = '<div class="result success">';
+                html += '<h3>✅ Success! Here\'s the full response:</h3>';
+                html += '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                
+                if (data.response) {
+                    html += '<p><strong>Message:</strong> ' + data.response + '</p>';
+                }
+                if (data.mood) {
+                    html += '<p><strong>Mood:</strong> ' + data.mood + '</p>';
+                }
+                if (data.private_mode !== undefined) {
+                    html += '<p><strong>Private Mode:</strong> ' + data.private_mode + '</p>';
+                }
+                
+                html += '</div>';
+                resultDiv.innerHTML = html;
+                
+            } catch (error) {
+                resultDiv.innerHTML = '<div class="result error">❌ <strong>Failed!</strong><br>' + 
+                    'Error: ' + error.message + '</div>';
+            }
+        }
+        
+        async function testNetwork() {
+            const resultDiv = document.getElementById('networkResult');
+            resultDiv.innerHTML = '<p>✅ Request sent! Check the Network tab in DevTools (F12)</p>';
+            
+            try {
+                const response = await fetch('api/chat.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: 'network test',
+                        user_id: 1,
+                        time_of_day: 'day',
+                        time_confused: false
+                    })
+                });
+                
+                const status = response.status;
+                const text = await response.text();
+                
+                resultDiv.innerHTML = '<div class="result ' + (status === 200 ? 'success' : 'error') + '">' +
+                    '<p><strong>Status:</strong> ' + status + '</p>' +
+                    '<p><strong>Response preview:</strong></p>' +
+                    '<pre>' + text.substring(0, 300) + '</pre>' +
+                    '</div>';
+                
+            } catch (error) {
+                resultDiv.innerHTML = '<div class="result error">❌ Error: ' + error.message + '</div>';
+            }
+        }
+    </script>
+</body>
+</html>
