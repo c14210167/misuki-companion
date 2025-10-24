@@ -1,5 +1,5 @@
 <?php
-// Clean chat.php - ALL ISSUES FIXED
+// Clean chat.php - ALL ISSUES FIXED + JSON ENCODING FIX
 ini_set('display_errors', 0);
 ini_set('log_errors', 1);
 error_reporting(E_ALL);
@@ -90,7 +90,7 @@ try {
         }
     }
 
-        // ✅ STEP 1.5: CHECK PRIVATE MODE (NEW!)
+    // ✅ STEP 1.5: CHECK PRIVATE MODE (NEW!)
     $is_private_mode = getPrivateMode($user_id);
     $private_mode_context = '';
 
@@ -358,6 +358,7 @@ try {
     
     $personality_prompt = getMisukiPersonalityPrompt();
     $full_prompt = $personality_prompt . "\n\n" . $context;
+    
     // Add interruption context if user was typing
     if ($user_interrupted) {
         $full_prompt .= "\n\n=== 🔔 NOTICE ===\n";
@@ -369,7 +370,9 @@ try {
         $full_prompt .= "It's YOUR choice - be natural about it.\n\n";
     }
 
-    // STEP 10: Call Claude API
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 10: Call Claude API - BULLETPROOF VERSION WITH JSON FIX
+    // ═══════════════════════════════════════════════════════════════
     $api_key = getenv('ANTHROPIC_API_KEY');
     
     if (!$api_key) {
@@ -387,15 +390,34 @@ try {
         throw new Exception('API key not configured');
     }
     
-    $ch = curl_init('https://api.anthropic.com/v1/messages');
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Content-Type: application/json',
-        'x-api-key: ' . $api_key,
-        'anthropic-version: 2023-06-01'
-    ]);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
+    // ✅ FIX 1: Log and validate prompt size
+    $original_prompt_size = strlen($full_prompt);
+    error_log("📦 Original prompt size: " . number_format($original_prompt_size) . " bytes");
+    
+    // ✅ FIX 2: Clean UTF-8 encoding issues
+    $full_prompt = mb_convert_encoding($full_prompt, 'UTF-8', 'UTF-8');
+    $user_message = mb_convert_encoding($user_message, 'UTF-8', 'UTF-8');
+    
+    // ✅ FIX 3: If prompt is TOO large, truncate intelligently
+    $max_prompt_size = 100000; // ~100KB is safe for JSON encoding
+    if (strlen($full_prompt) > $max_prompt_size) {
+        error_log("⚠️ Prompt too large (" . number_format(strlen($full_prompt)) . " bytes), truncating...");
+        
+        // Keep the personality prompt and most recent context only
+        $personality = getMisukiPersonalityPrompt();
+        $recent_convos = getRecentConversations($db, $user_id, 5); // Only last 5 messages
+        $simple_context = buildContextForAI([], $recent_convos, [], $current_mood);
+        
+        $full_prompt = $personality . "\n\n" . $simple_context;
+        $full_prompt .= "\n\n[Note: Some context was trimmed due to size constraints]\n";
+        $full_prompt .= $time_context; // Keep time context
+        $full_prompt .= $private_mode_context; // Keep private mode context
+        
+        error_log("✂️ Truncated prompt size: " . number_format(strlen($full_prompt)) . " bytes");
+    }
+    
+    // ✅ FIX 4: Build the API payload
+    $api_payload = [
         'model' => 'claude-sonnet-4-20250514',
         'max_tokens' => 220,
         'system' => $full_prompt,
@@ -406,19 +428,77 @@ try {
             ]
         ],
         'temperature' => 1.0
-    ]));
+    ];
+    
+    // ✅ FIX 5: Try to encode and handle failures gracefully
+    $json_payload = json_encode($api_payload);
+    
+    if ($json_payload === false || empty($json_payload)) {
+        $json_error = json_last_error_msg();
+        error_log("❌ JSON encode failed: " . $json_error);
+        
+        // Try with even more minimal payload
+        error_log("🔄 Attempting minimal fallback payload...");
+        $api_payload = [
+            'model' => 'claude-sonnet-4-20250514',
+            'max_tokens' => 220,
+            'system' => 'You are Misuki, Dan\'s girlfriend. Be natural and caring.',
+            'messages' => [
+                [
+                    'role' => 'user',
+                    'content' => $user_message
+                ]
+            ],
+            'temperature' => 1.0
+        ];
+        
+        $json_payload = json_encode($api_payload);
+        
+        if ($json_payload === false || empty($json_payload)) {
+            error_log("💥 Fatal: Cannot encode JSON even with minimal payload");
+            throw new Exception('Fatal JSON encoding error: ' . json_last_error_msg());
+        }
+        
+        error_log("✅ Minimal payload encoded successfully");
+    }
+    
+    error_log("📤 Final JSON payload: " . number_format(strlen($json_payload)) . " bytes");
+    
+    // ✅ FIX 6: Make the CURL call with validated payload
+    $ch = curl_init('https://api.anthropic.com/v1/messages');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'x-api-key: ' . $api_key,
+        'anthropic-version: 2023-06-01'
+    ]);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $json_payload);  // ✅ Using pre-validated JSON
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
     
     $response = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curl_error = curl_error($ch);
     curl_close($ch);
     
-    if ($http_code !== 200) {
-        error_log("Claude API error: " . $response);
-        throw new Exception('API call failed');
+    // ✅ FIX 7: Better error handling
+    if ($curl_error) {
+        error_log("🌐 CURL error: " . $curl_error);
+        throw new Exception('Network error: ' . $curl_error);
     }
+    
+    if ($http_code !== 200) {
+        error_log("🔴 Claude API error (HTTP $http_code): " . substr($response, 0, 500));
+        throw new Exception('API call failed with HTTP ' . $http_code);
+    }
+    
+    error_log("✅ API call successful (HTTP 200)");
     
     $result = json_decode($response, true);
     $response_text = $result['content'][0]['text'] ?? '';
+    // ═══════════════════════════════════════════════════════════════
+    // END OF BULLETPROOF API CALL SECTION
+    // ═══════════════════════════════════════════════════════════════
 
     if (shouldMakeTypo($current_mood, $misuki_status)) {
         $response_text = addNaturalTypo($response_text);
@@ -504,31 +584,6 @@ try {
         exit;
     }
 
-
-    if (shouldSaveMemory($message_analysis)) {
-        saveMemory($db, $user_id, $user_message, $response_text, $message_analysis);
-    }
-    
-    updateMoodFromInteraction($db, $user_id, $message_analysis, $user_message);
-    updateConversationStyle($db, $user_id, $message_analysis);
-    updateRelationshipDynamics($db, $user_id, $user_message, $response_text);
-    
-    $new_nickname = detectDanNicknameInResponse($response_text);
-    if ($new_nickname) {
-        saveDanNickname($new_nickname);
-    }
-    
-    echo json_encode([
-        'response' => $response_text,
-        'mood' => $current_mood['current_mood'] ?? 'gentle',
-        'mood_text' => $current_mood['reason'] ?? 'Feeling gentle',
-        'emotion_timeline' => $emotion_timeline,
-        'has_split' => false,
-        'closeness_level' => getRelationshipCloseness($db, $user_id),
-        'current_activity' => $current_activity ? $current_activity['activity'] : null,
-        'was_woken' => $misuki_status['was_woken'] ?? false,
-        'private_mode' => $is_private_mode
-    ]);
     
 } catch (Exception $e) {
     error_log("Chat API Error: " . $e->getMessage());
@@ -541,7 +596,7 @@ try {
         'mood_text' => 'A bit confused',
         'emotion_timeline' => [],
         'error' => true,
-        'private_mode' => $is_private_mode
+        'private_mode' => $is_private_mode ?? false
     ]);
 }
 

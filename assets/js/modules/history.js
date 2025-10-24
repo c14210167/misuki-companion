@@ -27,7 +27,7 @@ export async function loadChatHistory() {
             },
             body: JSON.stringify({
                 user_id: 1,
-                limit: 50  // ✅ Increased from 25 to 50 to show more history
+                limit: 20  // ✅ LIMITED TO 20 MESSAGES TO REDUCE LAG
             }),
             cache: 'no-store'
         });
@@ -73,29 +73,20 @@ export async function loadChatHistory() {
                     window.lastMessageDate = dateStr;
                 }
                 
-                // ✅ FIX: Check if this is a follow-up message
-                const isFollowUp = conv.user_message === '[FOLLOW-UP]';
+                // Add user message
+                addMessageInstant('user', conv.user_message, conv.timestamp);
                 
-                if (!isFollowUp) {
-                    // Normal message - add user message
-                    addMessageInstant('user', conv.user_message, conv.timestamp);
-                } else {
-                    // Follow-up message - skip user message, only show Misuki's message
-                    console.log(`💬 Follow-up message detected at index ${index}`);
-                }
-                
-                // 🔧 Check if Misuki's response contains [SPLIT] marker
-                if (conv.misuki_response.includes('[SPLIT]')) {
-                    // This was a split message - break it apart and display ALL parts
-                    const splitMessages = conv.misuki_response.split('\n[SPLIT]\n');
-                    console.log(`💬 Found split message with ${splitMessages.length} parts`);
+                // Check if Misuki's response contains multiple parts (FOLLOW-UP system)
+                if (conv.misuki_response.includes('[FOLLOW-UP]')) {
+                    // Split and display each part
+                    const parts = conv.misuki_response.split('[FOLLOW-UP]').map(p => p.trim()).filter(p => p);
                     
-                    // 🔧 Add EACH part as a separate message
-                    splitMessages.forEach((messagePart, partIndex) => {
-                        const trimmedPart = messagePart.trim();
-                        if (trimmedPart) {  // Only add non-empty parts
-                            console.log(`   📝 Part ${partIndex + 1}: "${trimmedPart.substring(0, 50)}..."`);
-                            addMessageInstant('misuki', trimmedPart, conv.timestamp);
+                    parts.forEach((part, partIndex) => {
+                        // 🔧 FIX: Strip any leading [FOLLOW-UP] markers that might be in the text
+                        const cleanedPart = part.replace(/^\[FOLLOW-UP\]\s*/i, '').trim();
+                        
+                        if (cleanedPart) {
+                            addMessageInstant('misuki', cleanedPart, conv.timestamp);
                         }
                     });
                 } else {
