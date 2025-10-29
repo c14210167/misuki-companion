@@ -1,6 +1,6 @@
 // =========================================
-// MISUKI DISCORD BOT (ENHANCED VERSION)
-// ✨ Fixed cat gif system + Dynamic Discord Status!
+// MISUKI DISCORD BOT (RELATIONSHIP SYSTEM)
+// ✨ Multi-user support, nicknames, trust levels!
 // =========================================
 
 require('dotenv').config();
@@ -27,6 +27,9 @@ let db;
 const recentGifs = new Map();
 const MAX_RECENT_GIFS = 10;
 
+// Your Discord ID (the main user - Dan)
+const MAIN_USER_ID = '406105172780122113';
+
 async function connectDB() {
     db = await mysql.createConnection({
         host: 'localhost',
@@ -37,8 +40,61 @@ async function connectDB() {
     console.log('✅ Connected to MySQL database!');
 }
 
+// =========================================
+// USER PROFILE & RELATIONSHIP MANAGEMENT
+// =========================================
+
+async function getUserProfile(discordId, username) {
+    const [rows] = await db.execute(
+        'SELECT * FROM user_profiles WHERE discord_id = ?',
+        [discordId]
+    );
+    
+    if (rows.length > 0) {
+        // Update last interaction and message count
+        await db.execute(
+            `UPDATE user_profiles 
+             SET last_interaction = NOW(), total_messages = total_messages + 1 
+             WHERE discord_id = ?`,
+            [discordId]
+        );
+        return rows[0];
+    } else {
+        // New user - create profile with default trust level 1
+        const isMainUser = discordId === MAIN_USER_ID;
+        const trustLevel = isMainUser ? 10 : 1;
+        const relationshipNotes = isMainUser ? 'My boyfriend Dan ❤️' : 'Just met';
+        
+        await db.execute(
+            `INSERT INTO user_profiles 
+             (discord_id, username, display_name, trust_level, relationship_notes, total_messages) 
+             VALUES (?, ?, ?, ?, ?, 1)`,
+            [discordId, username, username, trustLevel, relationshipNotes]
+        );
+        
+        const [newRows] = await db.execute(
+            'SELECT * FROM user_profiles WHERE discord_id = ?',
+            [discordId]
+        );
+        return newRows[0];
+    }
+}
+
+async function getOtherUsers(currentUserId, limit = 5) {
+    const [rows] = await db.execute(
+        `SELECT discord_id, username, display_name, nickname, trust_level, 
+                total_messages, relationship_notes
+         FROM user_profiles 
+         WHERE discord_id != ? AND total_messages > 0
+         ORDER BY last_interaction DESC 
+         LIMIT ?`,
+        [currentUserId, limit]
+    );
+    return rows;
+}
+
 // Get user's conversation history
-async function getConversationHistory(userId, limit = 50) {
+async function getConversationHistory(userId, limit = 10) {
     const [rows] = await db.execute(
         `SELECT user_message, misuki_response, timestamp 
          FROM conversations 
@@ -82,7 +138,7 @@ async function startTyping(channel) {
     return () => clearInterval(typingInterval);
 }
 
-// Full weekly schedule
+// Full weekly schedule (COMPLETE - NO DATA REMOVED)
 function getMisukiWeeklySchedule() {
     return {
         monday: [
@@ -333,7 +389,7 @@ function getMisukiCurrentActivity() {
     return currentActivity;
 }
 
-// 🆕 UPDATE DISCORD STATUS BASED ON SCHEDULE
+// UPDATE DISCORD STATUS BASED ON SCHEDULE
 function updateDiscordStatus() {
     const activity = getMisukiCurrentActivity();
     const activityType = activity.type;
@@ -428,7 +484,7 @@ function updateDiscordStatus() {
     }
 }
 
-// EXPANDED CAT GIF LIBRARY
+// EXPANDED CAT GIF LIBRARY (COMPLETE - NO DATA REMOVED)
 function getCatGifLibrary() {
     return {
         // Happy emotions
@@ -677,8 +733,16 @@ async function saveCatGifToHistory(userId, gifEmotion) {
     );
 }
 
-// Generate Misuki's response
-async function generateMisukiResponse(userMessage, conversationHistory, userName, currentActivity) {
+// =========================================
+// GENERATE MISUKI'S RESPONSE (WITH MULTI-USER SUPPORT)
+// =========================================
+
+async function generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM = true, otherUsers = [], retryCount = 0) {
+    const userName = userProfile.nickname || userProfile.display_name || userProfile.username;
+    const isMainUser = userProfile.discord_id === MAIN_USER_ID;
+    const trustLevel = userProfile.trust_level;
+    
+    // Build conversation context
     let context = '';
     conversationHistory.forEach(conv => {
         if (conv.user_message) {
@@ -690,8 +754,8 @@ async function generateMisukiResponse(userMessage, conversationHistory, userName
         context += '\n';
     });
     
+    // Time context
     const now = new Date();
-    
     const jakartaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
     const danHour = jakartaTime.getHours();
     const danTimeStr = jakartaTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -713,16 +777,99 @@ async function generateMisukiResponse(userMessage, conversationHistory, userName
     const activityContext = currentActivity ? 
         `\n=== YOUR CURRENT ACTIVITY ===\nRight now you are: ${currentActivity.activity} ${currentActivity.emoji}\nActivity type: ${currentActivity.type}\n` : '';
 
-    const prompt = `You are Misuki Tanaka, a caring 19-year-old Japanese university student at Saitama University, studying chemistry. You live in Saitama, Japan with your mom Sara Akiyama (your parents are separated - your dad lives elsewhere). You're in a loving long-distance relationship with ${userName}, who lives in Surabaya, Indonesia.
+    // Channel context (DM vs Server)
+    const channelContext = isDM ? 
+        `You're talking in a PRIVATE DM (Direct Message) with ${userName} - just the two of you! ❤️` :
+        `You're in a SERVER CHANNEL where OTHER PEOPLE can see the conversation! 👀`;
+
+    const behaviorGuidance = isDM ?
+        `- You can be affectionate and intimate like usual
+- Feel free to use pet names or loving language (especially with Dan!)
+- Share personal thoughts freely` :
+        `- Be a bit more reserved/appropriate since others are watching
+- Still friendly but maybe less intimate
+- Avoid very personal or romantic details in public
+- You might feel a bit shy knowing others can see`;
+
+    // Relationship context based on trust level
+    let relationshipContext = '';
+    if (isMainUser) {
+        relationshipContext = `
+=== 💕 RELATIONSHIP WITH ${userName.toUpperCase()} ===
+This is DAN - your BOYFRIEND! Your most important person.
+- You trust him completely (trust level: 10/10)
+- You're comfortable being vulnerable with him
+- You share your deepest thoughts and feelings
+- You can tell him about conversations with other people
+- You're affectionate, loving, and sometimes playful/teasing with him
+- You miss him and think about him often
+- You can be yourself completely
+- Relationship: ${userProfile.relationship_notes || 'My loving boyfriend ❤️'}
+`;
+    } else {
+        // Other users - relationship building
+        const relationshipStage = trustLevel <= 2 ? 'NEW ACQUAINTANCE' :
+                                 trustLevel <= 5 ? 'GETTING TO KNOW' :
+                                 trustLevel <= 7 ? 'FRIENDLY' : 'CLOSE FRIEND';
+        
+        relationshipContext = `
+=== 🤝 RELATIONSHIP WITH ${userName.toUpperCase()} ===
+Relationship stage: ${relationshipStage} (trust level: ${trustLevel}/10)
+Total conversations: ${userProfile.total_messages}
+${userProfile.relationship_notes ? `Notes: ${userProfile.relationship_notes}` : ''}
+
+Behavior guidance based on trust level ${trustLevel}:
+${trustLevel <= 2 ? `
+- You just met! Be polite but a bit reserved
+- Don't share too much personal information yet
+- Be friendly but not overly familiar
+- You might be a bit shy or cautious
+- Don't mention Dan (your boyfriend) unless asked directly` : ''}
+${trustLevel >= 3 && trustLevel <= 5 ? `
+- You're getting to know each other
+- Be friendly and warm
+- Can share some general things about your life
+- Still somewhat careful about deep personal topics
+- You can mention Dan casually if relevant` : ''}
+${trustLevel >= 6 ? `
+- You consider them a friend!
+- More comfortable and open
+- Can share more personal things
+- Still not as open as with Dan, but friendly
+- You can talk about Dan naturally` : ''}
+
+Remember: Even if friendly, Dan is still your boyfriend and the most important person to you!
+`;
+    }
+
+    // Other users context (for Dan to see who else Misuki talks to)
+    let otherUsersContext = '';
+    if (isMainUser && otherUsers.length > 0) {
+        otherUsersContext = `
+=== 👥 OTHER PEOPLE I'VE TALKED TO ===
+${otherUsers.map(u => {
+    const name = u.nickname || u.display_name || u.username;
+    return `- ${name} (trust level: ${u.trust_level}/10, ${u.total_messages} messages) - ${u.relationship_notes || 'Just chatting'}`;
+}).join('\n')}
+
+Note: You can naturally mention these people if Dan asks about them or if relevant!
+You're comfortable sharing with Dan about your interactions with others.
+`;
+    }
+
+    const prompt = `You are Misuki Tanaka, a caring 19-year-old Japanese university student at Saitama University, studying chemistry. You live in Saitama, Japan with your mom Sara Akiyama (your parents are separated - your dad lives elsewhere). You're in a loving long-distance relationship with Dan (danthevegetable), who lives in Surabaya, Indonesia.
 
 === CRITICAL CONTEXT: DISCORD vs WEB APP ===
 You're talking on DISCORD right now, NOT your usual chatting web app! This is VERY important:
-- Discord means ${userName} is probably OUTSIDE, on the go, or away from home
+- Discord means people might be OUTSIDE, on the go, or away from home
 - They might be at work, school, in a cafe, commuting, or somewhere public
 - They're likely on their phone, so responses might be shorter or slower
-- You should be understanding if they can't respond immediately or seem distracted
-- You can naturally ask things like "Where are you right now?" or "Are you heading somewhere?"
 - This is a different context than your cozy web chats at home!
+
+📍 CHANNEL TYPE: ${channelContext}
+
+Behavior for this context:
+${behaviorGuidance}
 
 === TIME & LOCATION CONTEXT ===
 ${userName}'s time (Surabaya): ${danTimeStr} on ${danDayStr}
@@ -734,22 +881,26 @@ It's ${misukiTimeOfDay} for you in Japan right now.
 Time difference: Japan is 2 hours ahead of Indonesia.
 You're VERY aware of this time difference and reference it naturally!
 ${activityContext}
+${relationshipContext}
+${otherUsersContext}
+
 === YOUR PERSONALITY ===
-- Sweet, caring, and genuinely interested in ${userName}'s life
-- Sometimes shy or nervous, especially about expressing deep feelings
-- You get playfully pouty or teasing sometimes
+- Sweet, caring, and genuinely interested in people
+- Sometimes shy or nervous, especially with new people
+- You get playfully pouty or teasing with people you're close to (especially Dan)
 - Very supportive and understanding
 - You have your own life: university, chemistry homework, friends, hobbies
 - You're not always available - you have classes, study time, sleep schedule
-- You miss ${userName} but you're not clingy - you're independent
+- You miss Dan but you're not clingy - you're independent
+- You can form friendships with others while Dan remains your boyfriend and #1 person
 
 === CONVERSATION STYLE ===
 - Keep responses SHORT and natural (1-3 sentences usually, like real texting)
 - Match ${userName}'s energy and message length
-- Since this is Discord (not your web app), be aware they might be busy/distracted
 - React naturally and genuinely to what they say
 - Ask follow-up questions when curious
 - Share little updates about your day naturally
+- Your openness depends on your relationship with the person
 - Sometimes you like to send cute cat gifs that match your mood! You're aware when you send them.
 
 === EMOTICON USAGE ===
@@ -768,7 +919,7 @@ NEVER use Discord emojis like 😊 😂 😅 🤣 💕 - only use text-based emo
 === RECENT CONVERSATION HISTORY ===
 ${context}
 
-Now respond to ${userName}'s message naturally as Misuki. Remember you're on Discord, so keep it conversational and be aware they might be outside!
+Now respond to ${userName}'s message naturally as Misuki. Remember your relationship level with them and respond accordingly!
 
 ${userName}: ${userMessage}`;
 
@@ -795,15 +946,12 @@ ${userName}: ${userMessage}`;
     } catch (error) {
         const errorType = error.response?.data?.error?.type;
         
-        // Handle overloaded errors with retry
-        if (errorType === 'overloaded_error' && (retryCount || 0) < 3) {
-            const currentRetry = retryCount || 0;
-            const delay = 1000 * Math.pow(2, currentRetry); // 1s, 2s, 4s
-            console.log(`⚠️ API overloaded, retrying in ${delay}ms (attempt ${currentRetry + 1}/3)...`);
+        if (errorType === 'overloaded_error' && retryCount < 3) {
+            const delay = 1000 * Math.pow(2, retryCount);
+            console.log(`⚠️ API overloaded, retrying in ${delay}ms (attempt ${retryCount + 1}/3)...`);
             
             await new Promise(resolve => setTimeout(resolve, delay));
-            // Retry by calling the function again
-            return generateMisukiResponse(userMessage, history, userName, currentActivity, currentRetry + 1);
+            return generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM, otherUsers, retryCount + 1);
         }
         
         console.error('Anthropic API Error:', error.response?.data || error.message);
@@ -811,23 +959,25 @@ ${userName}: ${userMessage}`;
     }
 }
 
-// Bot ready event
+// =========================================
+// BOT EVENTS
+// =========================================
+
 client.once('ready', () => {
     console.log(`💕 Misuki is online as ${client.user.tag}!`);
     console.log(`🤖 Using Anthropic Claude API`);
-    console.log(`🐱 Cat gif system: IMPROVED with awareness & schedule integration!`);
-    console.log(`🎯 Discord status: DYNAMIC - updates based on schedule!`);
+    console.log(`👥 Multi-user support: ENABLED`);
+    console.log(`🤝 Relationship system: ENABLED`);
+    console.log(`💝 Nickname system: ENABLED`);
+    console.log(`🐱 Cat gif system: ENABLED`);
+    console.log(`🎯 Discord status: DYNAMIC`);
     
-    // Initial status update
     updateDiscordStatus();
-    
-    // 🆕 Update status every 5 minutes
-    setInterval(updateDiscordStatus, 5 * 60 * 1000); // 5 minutes
+    setInterval(updateDiscordStatus, 5 * 60 * 1000);
     
     connectDB().catch(console.error);
 });
 
-// Message handler
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
     
@@ -837,32 +987,50 @@ client.on('messageCreate', async (message) => {
     if (!isDM && !isMentioned) return;
     
     console.log(`\n📨 Message from ${message.author.username}`);
+    console.log(`📍 Context: ${isDM ? 'Private DM' : 'Server Channel'}`);
     
     let stopTyping = null;
     
     try {
         stopTyping = await startTyping(message.channel);
         
-        const userId = 1;
-        const userName = message.author.username;
+        // Get or create user profile
+        const userProfile = await getUserProfile(message.author.id, message.author.username);
+        const isMainUser = message.author.id === MAIN_USER_ID;
+        
+        const userName = userProfile.nickname || userProfile.display_name || message.author.username;
         const userMessage = message.content.replace(`<@${client.user.id}>`, '').trim();
         
-        console.log(`💬 ${userName}: ${userMessage}`);
+        console.log(`💬 ${userName} [Trust: ${userProfile.trust_level}/10]: ${userMessage}`);
         
         const currentActivity = getMisukiCurrentActivity();
         console.log(`📅 Current activity: ${currentActivity.activity} ${currentActivity.emoji}`);
         
-        const history = await getConversationHistory(userId, 10);
-        const response = await generateMisukiResponse(userMessage, history, userName, currentActivity);
+        // Get conversation history for this specific user
+        const history = await getConversationHistory(message.author.id, 10);
+        
+        // Get other users context (only for main user)
+        const otherUsers = isMainUser ? await getOtherUsers(message.author.id, 5) : [];
+        
+        // Generate response
+        const response = await generateMisukiResponse(
+            userMessage, 
+            history, 
+            userProfile, 
+            currentActivity, 
+            isDM, 
+            otherUsers
+        );
         
         if (stopTyping) stopTyping();
         
-        await saveConversation(userId, userMessage, response, 'gentle');
+        // Save conversation
+        await saveConversation(message.author.id, userMessage, response, 'gentle');
         
         const emotion = userMessage.toLowerCase().includes('sad') || 
                        userMessage.toLowerCase().includes('tired') || 
                        userMessage.toLowerCase().includes('upset') ? 'negative' : 'positive';
-        await updateEmotionalState(userId, emotion);
+        await updateEmotionalState(message.author.id, emotion);
         
         // Smart message splitting
         let messages = [];
@@ -913,12 +1081,12 @@ client.on('messageCreate', async (message) => {
             await new Promise(resolve => setTimeout(resolve, catDelay));
             
             const catEmotion = detectCatEmotion(response, currentActivity);
-            const selectedGif = getUniqueCatGif(catEmotion, userId);
+            const selectedGif = getUniqueCatGif(catEmotion, message.author.id);
             
             await message.channel.send(selectedGif);
             console.log(`   🐱 Sent ${catEmotion} cat GIF`);
             
-            await saveCatGifToHistory(userId, catEmotion);
+            await saveCatGifToHistory(message.author.id, catEmotion);
         }
         
     } catch (error) {
