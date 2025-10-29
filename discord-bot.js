@@ -793,6 +793,19 @@ ${userName}: ${userMessage}`;
         
         return responseText;
     } catch (error) {
+        const errorType = error.response?.data?.error?.type;
+        
+        // Handle overloaded errors with retry
+        if (errorType === 'overloaded_error' && (retryCount || 0) < 3) {
+            const currentRetry = retryCount || 0;
+            const delay = 1000 * Math.pow(2, currentRetry); // 1s, 2s, 4s
+            console.log(`⚠️ API overloaded, retrying in ${delay}ms (attempt ${currentRetry + 1}/3)...`);
+            
+            await new Promise(resolve => setTimeout(resolve, delay));
+            // Retry by calling the function again
+            return generateMisukiResponse(userMessage, history, userName, currentActivity, currentRetry + 1);
+        }
+        
         console.error('Anthropic API Error:', error.response?.data || error.message);
         return "Oh no... something went wrong ><";
     }
