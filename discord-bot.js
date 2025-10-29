@@ -93,6 +93,36 @@ async function getOtherUsers(currentUserId, limit = 5) {
     return rows;
 }
 
+// Get conversation snippets from other users (for Dan to see what others talked about)
+async function getOtherUsersConversations(currentUserId, limit = 3) {
+    const otherUsers = await getOtherUsers(currentUserId, 5);
+    
+    const conversationSnippets = [];
+    
+    for (const user of otherUsers) {
+        const [rows] = await db.execute(
+            `SELECT user_message, misuki_response, timestamp 
+             FROM conversations 
+             WHERE user_id = ? AND user_message != ''
+             ORDER BY timestamp DESC 
+             LIMIT ?`,
+            [user.discord_id, limit]
+        );
+        
+        if (rows.length > 0) {
+            const userName = user.nickname || user.display_name || user.username;
+            conversationSnippets.push({
+                user: userName,
+                userId: user.discord_id,
+                trustLevel: user.trust_level,
+                messages: rows.reverse() // oldest first
+            });
+        }
+    }
+    
+    return conversationSnippets;
+}
+
 // Get user's conversation history
 async function getConversationHistory(userId, limit = 10) {
     const [rows] = await db.execute(
@@ -737,12 +767,12 @@ async function saveCatGifToHistory(userId, gifEmotion) {
 // GENERATE MISUKI'S RESPONSE (WITH MULTI-USER SUPPORT)
 // =========================================
 
-async function generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM = true, otherUsers = [], retryCount = 0) {
+async function generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM = true, otherUsers = [], otherConversations = [], retryCount = 0) {
     const userName = userProfile.nickname || userProfile.display_name || userProfile.username;
     const isMainUser = userProfile.discord_id === MAIN_USER_ID;
     const trustLevel = userProfile.trust_level;
     
-    // Build conversation context
+    // Build conversation context with timestamps
     let context = '';
     conversationHistory.forEach(conv => {
         if (conv.user_message) {
@@ -753,6 +783,37 @@ async function generateMisukiResponse(userMessage, conversationHistory, userProf
         }
         context += '\n';
     });
+    
+    // Add time awareness - calculate time since last message
+    let timeContext = '';
+    if (conversationHistory.length > 0) {
+        const lastConv = conversationHistory[conversationHistory.length - 1];
+        if (lastConv && lastConv.timestamp) {
+            const now = new Date();
+            const lastMessageTime = new Date(lastConv.timestamp);
+            const timeDiffMs = now - lastMessageTime;
+            const timeDiffMinutes = Math.round(timeDiffMs / 60000);
+            const timeDiffHours = timeDiffMs / 3600000;
+            
+            timeContext = `\n\n=== ⏰ CRITICAL TIME AWARENESS ===\n`;
+            timeContext += `${userName}'s LAST message was at: ${lastMessageTime.toLocaleString('en-US', { timeZone: 'Asia/Jakarta', hour: 'numeric', minute: '2-digit', hour12: true })}\n`;
+            timeContext += `Current time: ${now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta', hour: 'numeric', minute: '2-digit', hour12: true })}\n`;
+            
+            if (timeDiffMinutes < 60) {
+                timeContext += `⚠️ TIME SINCE LAST MESSAGE: ${timeDiffMinutes} MINUTES\n`;
+            } else if (timeDiffHours < 24) {
+                timeContext += `⚠️ TIME SINCE LAST MESSAGE: ${timeDiffHours.toFixed(1)} HOURS (${timeDiffMinutes} minutes)\n`;
+            } else {
+                const days = Math.floor(timeDiffHours / 24);
+                const remainingHours = (timeDiffHours % 24).toFixed(1);
+                timeContext += `⚠️ TIME SINCE LAST MESSAGE: ${days} day(s) and ${remainingHours} hours\n`;
+            }
+            
+            timeContext += `\n🚨 IMPORTANT: ${timeDiffMinutes} minutes have passed since ${userName}'s last message!\n`;
+            timeContext += `Be aware of this time gap when responding. If they said "going to shower", ${timeDiffMinutes} minutes have passed since then.\n`;
+            timeContext += `================================\n\n`;
+        }
+    }
     
     // Time context
     const now = new Date();
@@ -852,7 +913,17 @@ ${otherUsers.map(u => {
     return `- ${name} (trust level: ${u.trust_level}/10, ${u.total_messages} messages) - ${u.relationship_notes || 'Just chatting'}`;
 }).join('\n')}
 
-Note: You can naturally mention these people if Dan asks about them or if relevant!
+=== 💬 RECENT CONVERSATIONS WITH OTHERS ===
+${otherConversations.length > 0 ? otherConversations.map(conv => {
+    let snippet = `\nWith ${conv.user} (trust level ${conv.trustLevel}/10):\n`;
+    conv.messages.forEach(msg => {
+        snippet += `${conv.user}: ${msg.user_message}\n`;
+        snippet += `You: ${msg.misuki_response}\n`;
+    });
+    return snippet;
+}).join('\n') : '(No recent conversations with others yet)'}
+
+Note: You can naturally mention these people and recall what they talked about if Dan asks!
 You're comfortable sharing with Dan about your interactions with others.
 `;
     }
@@ -918,6 +989,7 @@ NEVER use Discord emojis like 😊 😂 😅 🤣 💕 - only use text-based emo
 
 === RECENT CONVERSATION HISTORY ===
 ${context}
+${timeContext}
 
 Now respond to ${userName}'s message naturally as Misuki. Remember your relationship level with them and respond accordingly!
 
@@ -951,7 +1023,7 @@ ${userName}: ${userMessage}`;
             console.log(`⚠️ API overloaded, retrying in ${delay}ms (attempt ${retryCount + 1}/3)...`);
             
             await new Promise(resolve => setTimeout(resolve, delay));
-            return generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM, otherUsers, retryCount + 1);
+            return generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM, otherUsers, otherConversations, retryCount + 1);
         }
         
         console.error('Anthropic API Error:', error.response?.data || error.message);
@@ -1011,6 +1083,7 @@ client.on('messageCreate', async (message) => {
         
         // Get other users context (only for main user)
         const otherUsers = isMainUser ? await getOtherUsers(message.author.id, 5) : [];
+        const otherConversations = isMainUser ? await getOtherUsersConversations(message.author.id, 3) : [];
         
         // Generate response
         const response = await generateMisukiResponse(
@@ -1019,7 +1092,8 @@ client.on('messageCreate', async (message) => {
             userProfile, 
             currentActivity, 
             isDM, 
-            otherUsers
+            otherUsers,
+            otherConversations
         );
         
         if (stopTyping) stopTyping();
