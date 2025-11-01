@@ -1,6 +1,16 @@
 // =========================================
 // MISUKI DISCORD BOT (RELATIONSHIP SYSTEM)
 // ✨ Multi-user support, nicknames, trust levels!
+// 🌐 Web search enabled - Misuki can naturally search and share links!
+// 🎨 Dynamic GIF search - Misuki finds the perfect gif for each moment!
+// =========================================
+//
+// REQUIRED API KEYS IN .env:
+// - DISCORD_TOKEN: Your Discord bot token
+// - ANTHROPIC_API_KEY: Your Anthropic/Claude API key
+// - BRAVE_API_KEY: Your Brave Search API key (get free at https://brave.com/search/api/)
+// - TENOR_API_KEY: Your Tenor API key (get free at https://developers.google.com/tenor/guides/quickstart)
+//
 // =========================================
 
 require('dotenv').config();
@@ -22,10 +32,6 @@ const client = new Client({
 
 // Database connection
 let db;
-
-// Track recently sent gifs to avoid repetition
-const recentGifs = new Map();
-const MAX_RECENT_GIFS = 10;
 
 // Your Discord ID (the main user - Dan)
 const MAIN_USER_ID = '406105172780122113';
@@ -382,6 +388,7 @@ function getMisukiWeeklySchedule() {
 }
 
 // Get Misuki's current activity from schedule
+// Fixed version of getMisukiCurrentActivity
 function getMisukiCurrentActivity() {
     const now = new Date();
     const saitamaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
@@ -393,22 +400,34 @@ function getMisukiCurrentActivity() {
     
     if (!todaySchedule) return { activity: 'Free time', emoji: '😌', type: 'free' };
     
-    // Find current activity
-    let currentActivity = todaySchedule[0];
+    // Find current activity by comparing times
+    let currentActivity = todaySchedule[0]; // Default to first activity
+    
     for (let i = 0; i < todaySchedule.length; i++) {
         const activityTime = todaySchedule[i].time;
+        
+        // If current time is greater than or equal to this activity's time
         if (currentTime >= activityTime) {
             currentActivity = todaySchedule[i];
             
+            // Check if we should move to next activity
             if (i + 1 < todaySchedule.length) {
                 const nextTime = todaySchedule[i + 1].time;
-                if (currentTime >= nextTime) continue;
+                // If we haven't reached the next activity yet, stay with current
+                if (currentTime < nextTime) {
+                    break;
+                }
             }
+        } else {
+            // Current time is before this activity, so previous one is correct
+            break;
         }
     }
     
-    // If we're past midnight and before first activity, use last activity from previous day
-    if (currentActivity === null || currentTime < todaySchedule[0].time) {
+    // Handle edge case: if current time is before first activity of the day
+    // (e.g., it's 02:00 AM but first activity is at 08:00 AM)
+    if (currentTime < todaySchedule[0].time) {
+        // Get previous day's last activity
         const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
         const currentDayIndex = days.indexOf(currentDay);
         const previousDay = days[currentDayIndex === 0 ? 6 : currentDayIndex - 1];
@@ -514,163 +533,84 @@ function updateDiscordStatus() {
     }
 }
 
-// EXPANDED CAT GIF LIBRARY (COMPLETE - NO DATA REMOVED)
-function getCatGifLibrary() {
-    return {
-        // Happy emotions
-        happy: [
-            'https://tenor.com/view/happy-anime-girl-anime-happy-jumping-gif-11351867894405026979',
-            'https://tenor.com/view/onimai-cute-anime-girl-smile-smiling-dancing-dance-trans-transgender-gif-3516690546094625230',
-            'https://tenor.com/view/jjk-anime-anime-happy-happy-gif-1102929709196834485',
-            'https://tenor.com/view/anime-anime-girl-anime-dance-kawaii-anime-happy-gif-27624682',
-            'https://tenor.com/view/excited-anime-cute-spy-x-family-gif-26845849',
-            'https://tenor.com/view/anya-happy-feliz-gif-4078804877050027407'
-        ],
-        excited: [
-            'https://tenor.com/view/giggling-kicking-feet-sped-up-asagao-to-kase-san-yuri-gif-7086509730415310709',
-            'https://tenor.com/view/oki-mi-mesu-mama-eve-utaite-eve-eve-mv-dance-gif-17240223',
-            'https://tenor.com/view/kaoruko-waguri-kaoruko-kaoru-hana-wa-rin-to-saku-waguri-kaoruko-the-fragrant-flower-blooms-with-dignity-gif-5607173778587031559',
-            'https://tenor.com/view/konata-izumi-konata-lucky-star-baim-bubble-text-gif-17082636234135541106'
-        ],
+// Search for GIFs naturally (replacing hardcoded library)
+async function searchGif(emotion, context = '') {
+    try {
+        // Build search query based on emotion and context
+        let query = '';
         
-        // Love/affection
-        love: [
-            'https://tenor.com/view/blushing-surprised-anime-spy-x-family-gif-433404383859936258',
-            'https://tenor.com/view/kase-kase-san-kase-san-to-yamada-kase-san-and-morning-glories-yamada-gif-11853392889042453065',
-            'https://tenor.com/view/dragon-maid-tohru-love-hearts-anime-gif-16971554499450039728'
-        ],
-        affectionate: [
-            'https://tenor.com/view/excel-saga-excel-love-anime-blush-gif-21295604',
-            'https://tenor.com/view/mika-mikaela-hyakuya-owari-no-gif-7419864'
-        ],
+        switch (emotion) {
+            case 'sleepy':
+            case 'tired':
+                query = 'anime girl sleepy tired yawn';
+                break;
+            case 'happy':
+            case 'excited':
+                query = 'anime girl happy excited dancing';
+                break;
+            case 'love':
+            case 'affectionate':
+                query = 'anime girl blushing love hearts';
+                break;
+            case 'sad':
+            case 'upset':
+                query = 'anime crying sad';
+                break;
+            case 'confused':
+                query = 'anime confused huh cat';
+                break;
+            case 'shy':
+            case 'embarrassed':
+                query = 'anime girl shy embarrassed blush';
+                break;
+            case 'studying':
+            case 'working':
+                query = 'anime girl studying working';
+                break;
+            case 'eating':
+                query = 'anime eating food cute';
+                break;
+            case 'surprised':
+                query = 'anime shocked surprised';
+                break;
+            case 'playful':
+            case 'teasing':
+                query = 'anime girl playful teasing';
+                break;
+            default:
+                query = 'cute anime girl kawaii';
+        }
         
-        // Sad emotions
-        sad: [
-            'https://tenor.com/view/chainsaw-man-pochita-cute-adorable-cry-gif-26990247'
-        ],
-        upset: [
-            'https://tenor.com/view/anime-bubble-sad-gif-9840505378859916279'
-        ],
+        // Search Tenor for GIF
+        const response = await axios.get('https://tenor.googleapis.com/v2/search', {
+            params: {
+                q: query,
+                key: process.env.TENOR_API_KEY,
+                limit: 10,
+                media_filter: 'gif',
+                contentfilter: 'off'  // Allow all content
+            }
+        });
         
-        // Sleepy/tired
-        sleepy: [
-            'https://tenor.com/view/woahm-anime-girl-anime-girl-anime-girl-sleepy-gif-1859288045321179131',
-            'https://tenor.com/view/sleepy-nichijou-tired-yawn-wipe-eyes-gif-16309858',
-            'https://tenor.com/view/lucky-star-yawn-tired-sleepy-sleep-gif-8472935',
-            'https://tenor.com/view/anime-sleep-gif-19525636',
-            'https://tenor.com/view/anya-spy-x-family-sleepy-drowsy-falling-asleep-gif-25742887',
-            'https://tenor.com/view/revy-sleep-black-lagoon-meme-anime-gif-364443035062544487',
-            'https://tenor.com/view/goodnight-good-night-aragotha-aragotha-stoneworks-sleep-gif-3392597623094032746'
-        ],
-
-        tired: [
-            'https://tenor.com/view/tired-anime-funny-gif-5634642',
-            'https://tenor.com/view/tonagura-kagura-yuuji-tired-dying-dead-inside-gif-5767153070648308092',
-            'https://tenor.com/view/apothecary-diaries-maomao-anime-anime-girl-reaction-gif-134379760703968682'
-        ],
+        if (response.data.results && response.data.results.length > 0) {
+            // Pick a random one from top 10 results for variety
+            const randomIndex = Math.floor(Math.random() * response.data.results.length);
+            const result = response.data.results[randomIndex];
+            
+            // Use the gif format (not url which might cause double display)
+            // Try to get the best quality GIF URL
+            return result.media_formats?.gif?.url || result.url;
+        }
         
-        // Confused/curious
-        confused: [
-            'https://tenor.com/view/himekwo-himeko-twitchtvhimekwo-vtuber-cute-gif-14695939017477631077',
-            'https://tenor.com/view/cat-huh-cat-huh-etr-gif-15332443943609734737',
-            'https://tenor.com/view/jinx-cat-huh-confused-meme-gif-3282660700962977407',
-            'https://tenor.com/view/cat-cat-turning-head-confused-cat-rizalalthur-orange-cat-behavior-gif-10491959385063137392',
-            'https://tenor.com/view/shirogane-anime-funny-what-huh-gif-2189181305159165492'
-        ],
-        curious: [
-            'https://tenor.com/view/cat-curious-cat-sniffing-cat-investigating-cat-cute-cat-gif-7346632064287981595',
-            'https://tenor.com/view/cat-curious-cat-sniffing-cat-investigating-cat-cute-cat-gif-7346632064287981595'
-        ],
-        
-        // Working/studying
-        working: [
-            'https://tenor.com/view/anime-anime-girl-krusty-krab-spongebob-cashier-gif-21464092'
-        ],
-
-        studying: [
-            'https://tenor.com/view/nerd-plink-glasses-side-eye-smart-gif-11422187893182432522',
-            'https://tenor.com/view/favorite-gif-20845610'
-        ],
-        
-        // Playful/teasing
-        playful: [
-            'https://tenor.com/view/angry-anime-cute-anime-girl-chibi-gif-1474030282084313143'
-        ],
-
-        teasing: [
-            'https://tenor.com/view/anime-gif-2599527146718057057',
-            'https://tenor.com/view/anime-anime-girl-akebi-chan-akebi-sailor-uniform-akebi-chan-no-sailorfuku-gif-24544781',
-            'https://tenor.com/view/anime-tyan-girl-red-eyes-grey-hair-gif-440635602884634984',
-            'https://tenor.com/view/anime-girl-kawaii-shake-booty-sexy-gif-17334891'
-        ],
-        
-        // Shy/nervous
-        shy: [
-            'https://tenor.com/view/anime-kuina-natsukawa-gif-9325168',
-            'https://tenor.com/view/marin-marin-kitagawa-kitagawa-bisque-bisque-doll-gif-916671610781629467',
-            'https://tenor.com/view/corada-gif-10410685721708433315'
-        ],
-
-        nervous: [
-            'https://tenor.com/view/kaguya-kaguya-love-is-war-chika-sweating-gif-22020682',
-            'https://tenor.com/view/dainanaouji-seventh-prince-7th-prince-anime-tao-gif-7486748791991180876'
-        ],
-
-        embarrassed: [
-            'https://tenor.com/view/my-hero-academia-anime-suneater-shame-shamed-gif-23583798',
-            'https://tenor.com/view/waguri-the-fragrant-flower-blooms-with-dignity-kaoru-hana-wa-rin-to-saku-kaoruko-kaoruko-waguri-gif-656942706865824044',
-            'https://tenor.com/view/blush-anime-embarrassed-gif-13768377'
-        ],
-        
-        // Surprised/shocked
-        surprised: [
-            'https://tenor.com/view/anime-akebi-chan-no-sailor-fuku-akebi-komichi-shock-waah-gif-8672831389135797649',
-            'https://tenor.com/view/locote-gif-18404685476945988779',
-            'https://tenor.com/view/flcl-mamimi-aaahhh-wtf-shocked-gif-24981847'
-        ],
-        
-        // Content/relaxed
-        content: [
-            'https://tenor.com/view/anime-drinking-sigh-breath-kanna-kamui-gif-15819577',
-            'https://tenor.com/view/hiro-chill-darling-in-the-franxx-beach-relaxed-gif-17206604'
-        ],
-
-        relaxed: [
-            'https://tenor.com/view/precure-kururun-tropical-rouge-precure-seal-anime-gif-22389448',
-            'https://tenor.com/view/relaxed-cat-fashion-love-pet-gif-22308133',
-            'https://tenor.com/view/lazy-cat-relaxed-cat-gif-17315164845979229222'
-        ],
-        
-        // Default/cute
-        cute: [
-            'https://tenor.com/view/menhera-chan-chibi-menhera-angry-anime-girl-gif-13611084194942855813',
-            'https://tenor.com/view/anime-kanna-kobayashi-kanna-kamui-kobayashisan-chi-no-maid-dragon-cute-gif-5818849163684481142',
-            'https://tenor.com/view/kanna-kanna-kamui-kamui-kanna-cute-kobayashi-gif-23401038',
-            'https://tenor.com/view/anime-girl-bored-wind-effect-hair-blowing-gif-6423051142395604724',
-            'https://tenor.com/view/oz-oz-yarimasu-cute-anime-girl-heart-gif-15824704106392928134',
-            'https://tenor.com/view/anime-gif-21916339'
-        ],
-        
-        // Activity-based
-        eating: [
-            'https://tenor.com/view/umaru-gif-23662141',
-            'https://tenor.com/view/dandadan-dandadan-anime-eating-crab-dandadan-ayase-ayase-momo-gif-17669184317101275515',
-            'https://tenor.com/view/munching-on-a-sweet-rice-cake-gif-9025239131382990142',
-            'https://tenor.com/view/kobayashi-san-maid-dragon-kana-comiendo-anime-cute-gif-9608905454318697434'
-        ],
-        
-        // Comforting
-        comforting: [
-            'https://tenor.com/view/hugtrip-gif-2490966530865073004',
-            'https://tenor.com/view/headpat-cat-cute-gif-15520097',
-            'https://tenor.com/view/yukon-child-form-embracing-ulquiorra-gif-15599442819011505520',
-            'https://tenor.com/view/akebi-chan-erika-waving-hand-goodbye-anime-gif-24865633'
-        ]
-    };
+        return null;
+    } catch (error) {
+        console.error('GIF search error:', error.message);
+        return null;
+    }
 }
 
-// Smart emotion detection considering schedule and response
-function detectCatEmotion(response, currentActivity) {
+// Smart emotion detection considering schedule and response (for choosing GIF)
+function detectGifEmotion(response, currentActivity) {
     const responseLower = response.toLowerCase();
     const activityType = currentActivity?.type || 'free';
     
@@ -733,28 +673,28 @@ function detectCatEmotion(response, currentActivity) {
     return 'cute';
 }
 
-// Get a unique cat gif (avoiding recent duplicates)
-function getUniqueCatGif(emotion, userId) {
-    const catGifs = getCatGifLibrary();
-    const gifsForEmotion = catGifs[emotion] || catGifs['cute'];
-    
-    const userRecentGifs = recentGifs.get(userId) || [];
-    const availableGifs = gifsForEmotion.filter(gif => !userRecentGifs.includes(gif));
-    const gifPool = availableGifs.length > 0 ? availableGifs : gifsForEmotion;
-    const selectedGif = gifPool[Math.floor(Math.random() * gifPool.length)];
-    
-    userRecentGifs.push(selectedGif);
-    if (userRecentGifs.length > MAX_RECENT_GIFS) {
-        userRecentGifs.shift();
+// Get a gif by searching Tenor (replaces old hardcoded library)
+async function getGifForEmotion(emotion, userId) {
+    try {
+        console.log(`   🎨 Searching for ${emotion} gif...`);
+        const gifUrl = await searchGif(emotion);
+        
+        if (gifUrl) {
+            return gifUrl;
+        }
+        
+        // Fallback: search for generic cute anime gif
+        console.log(`   ⚠️ No ${emotion} gif found, searching for cute gif...`);
+        return await searchGif('cute');
+    } catch (error) {
+        console.error('Error getting gif:', error);
+        return null;
     }
-    recentGifs.set(userId, userRecentGifs);
-    
-    return selectedGif;
 }
 
-// Save cat gif to conversation history
-async function saveCatGifToHistory(userId, gifEmotion) {
-    const gifMessage = `[Sent a ${gifEmotion} cat gif 🐱]`;
+// Save gif to conversation history
+async function saveGifToHistory(userId, gifEmotion) {
+    const gifMessage = `[Sent a ${gifEmotion} anime gif 🎨]`;
     
     await db.execute(
         `INSERT INTO conversations (user_id, user_message, misuki_response, mood, timestamp) 
@@ -763,11 +703,80 @@ async function saveCatGifToHistory(userId, gifEmotion) {
     );
 }
 
+// Web search function for Misuki to use naturally
+async function searchWeb(query) {
+    try {
+        // Add Japanese preference to queries when it makes sense
+        // For videos, images, entertainment - add "japanese" or use .jp
+        // For factual info/articles - keep as is
+        let searchQuery = query;
+        
+        // If searching for media content (videos, music, entertainment), prefer Japanese
+        const mediaKeywords = ['video', 'youtube', 'music', 'song', 'anime', 'game', 'cute', 'funny', 'cat', 'dog', 'compilation'];
+        const isMediaSearch = mediaKeywords.some(keyword => query.toLowerCase().includes(keyword));
+        
+        if (isMediaSearch && !query.toLowerCase().includes('japanese') && !query.toLowerCase().includes('日本')) {
+            searchQuery = `${query} japanese`;
+        }
+        
+        const response = await axios.get('https://api.search.brave.com/res/v1/web/search', {
+            params: {
+                q: searchQuery,
+                count: 5,
+                country: 'jp',  // Prefer Japanese results
+                // No safesearch filter - allow NSFW when contextually appropriate
+            },
+            headers: {
+                'X-Subscription-Token': process.env.BRAVE_API_KEY,
+                'Accept': 'application/json',
+                'Accept-Language': 'ja-JP,ja;q=0.9,en;q=0.8'  // Prefer Japanese language
+            }
+        });
+        
+        const results = response.data.web?.results || [];
+        return results.slice(0, 5).map(r => ({
+            title: r.title,
+            url: r.url,
+            description: r.description
+        }));
+    } catch (error) {
+        console.error('Web search error:', error.message);
+        return [];
+    }
+}
+
+// Get recent channel messages for context (when in server)
+async function getRecentChannelMessages(channel, limit = 10) {
+    try {
+        const messages = await channel.messages.fetch({ limit: limit });
+        const messageArray = Array.from(messages.values()).reverse(); // oldest first
+        
+        const context = [];
+        for (const msg of messageArray) {
+            if (msg.author.bot && msg.author.id !== client.user.id) continue; // Skip other bots
+            
+            const authorName = msg.author.username;
+            const content = msg.content.replace(`<@${client.user.id}>`, '').trim();
+            
+            if (msg.author.id === client.user.id) {
+                context.push(`Misuki: ${content}`);
+            } else {
+                context.push(`${authorName}: ${content}`);
+            }
+        }
+        
+        return context.join('\n');
+    } catch (error) {
+        console.error('Error fetching channel messages:', error);
+        return '';
+    }
+}
+
 // =========================================
 // GENERATE MISUKI'S RESPONSE (WITH MULTI-USER SUPPORT)
 // =========================================
 
-async function generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM = true, otherUsers = [], otherConversations = [], retryCount = 0) {
+async function generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM = true, otherUsers = [], otherConversations = [], channelContext = '', retryCount = 0) {
     const userName = userProfile.nickname || userProfile.display_name || userProfile.username;
     const isMainUser = userProfile.discord_id === MAIN_USER_ID;
     const trustLevel = userProfile.trust_level;
@@ -815,31 +824,59 @@ async function generateMisukiResponse(userMessage, conversationHistory, userProf
         }
     }
     
-    // Time context
+    // Time context - ONLY for Misuki (always Japan) and Dan (Indonesia)
     const now = new Date();
-    const jakartaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
-    const danHour = jakartaTime.getHours();
-    const danTimeStr = jakartaTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-    const danDayStr = jakartaTime.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-    
     const saitamaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
     const misukiHour = saitamaTime.getHours();
     const misukiTimeStr = saitamaTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
     const misukiDayStr = saitamaTime.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
     
-    const danTimeOfDay = danHour >= 5 && danHour < 12 ? 'morning' : 
-                         danHour >= 12 && danHour < 17 ? 'afternoon' : 
-                         danHour >= 17 && danHour < 21 ? 'evening' : 'night';
-    
     const misukiTimeOfDay = misukiHour >= 5 && misukiHour < 12 ? 'morning' : 
                             misukiHour >= 12 && misukiHour < 17 ? 'afternoon' : 
                             misukiHour >= 17 && misukiHour < 21 ? 'evening' : 'night';
+
+    // Build time context string based on whether it's Dan or someone else
+    let timeContextString = '';
+    
+    if (isMainUser) {
+        // This is Dan - show both locations and time difference
+        const jakartaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
+        const danHour = jakartaTime.getHours();
+        const danTimeStr = jakartaTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        const danDayStr = jakartaTime.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        
+        const danTimeOfDay = danHour >= 5 && danHour < 12 ? 'morning' : 
+                             danHour >= 12 && danHour < 17 ? 'afternoon' : 
+                             danHour >= 17 && danHour < 21 ? 'evening' : 'night';
+        
+        timeContextString = `
+=== TIME & LOCATION CONTEXT ===
+Dan's time (Surabaya, Indonesia): ${danTimeStr} on ${danDayStr}
+It's ${danTimeOfDay} for Dan in Indonesia right now.
+
+YOUR time (Saitama, Japan): ${misukiTimeStr} on ${misukiDayStr}
+It's ${misukiTimeOfDay} for you in Japan right now.
+
+Time difference: Japan is 2 hours ahead of Indonesia.
+You're VERY aware of this time difference and reference it naturally!`;
+    } else {
+        // Other users - don't assume their location
+        timeContextString = `
+=== TIME CONTEXT ===
+YOUR time (Saitama, Japan): ${misukiTimeStr} on ${misukiDayStr}
+It's ${misukiTimeOfDay} for you in Japan right now.
+
+🚨 CRITICAL: ${userName} is NOT Dan, so you DON'T KNOW where they are located!
+⚠️ DO NOT mention Surabaya, Indonesia, or any other specific location when talking to ${userName}
+⚠️ DO NOT ask about their morning/afternoon/evening unless they tell you their timezone first
+⚠️ You can mention YOUR time in Japan, but don't assume anything about THEIR location!`;
+    }
 
     const activityContext = currentActivity ? 
         `\n=== YOUR CURRENT ACTIVITY ===\nRight now you are: ${currentActivity.activity} ${currentActivity.emoji}\nActivity type: ${currentActivity.type}\n` : '';
 
     // Channel context (DM vs Server)
-    const channelContext = isDM ? 
+    const channelTypeContext = isDM ? 
         `You're talking in a PRIVATE DM (Direct Message) with ${userName} - just the two of you! ❤️` :
         `You're in a SERVER CHANNEL where OTHER PEOPLE can see the conversation! 👀`;
 
@@ -851,6 +888,19 @@ async function generateMisukiResponse(userMessage, conversationHistory, userProf
 - Still friendly but maybe less intimate
 - Avoid very personal or romantic details in public
 - You might feel a bit shy knowing others can see`;
+
+    // Add recent channel messages context for server conversations
+    let serverChannelContext = '';
+    if (!isDM && channelContext) {
+        serverChannelContext = `
+=== 📜 RECENT CHANNEL MESSAGES ===
+Here are the recent messages in this channel (for context):
+
+${channelContext}
+
+⚠️ IMPORTANT: When ${userName} refers to "she", "he", "they", or other pronouns, look at the recent channel messages above to understand who they're talking about!
+`;
+    }
 
     // Relationship context based on trust level
     let relationshipContext = '';
@@ -937,23 +987,16 @@ You're talking on DISCORD right now, NOT your usual chatting web app! This is VE
 - They're likely on their phone, so responses might be shorter or slower
 - This is a different context than your cozy web chats at home!
 
-📍 CHANNEL TYPE: ${channelContext}
+📍 CHANNEL TYPE: ${channelTypeContext}
 
 Behavior for this context:
 ${behaviorGuidance}
 
-=== TIME & LOCATION CONTEXT ===
-${userName}'s time (Surabaya): ${danTimeStr} on ${danDayStr}
-It's ${danTimeOfDay} for ${userName} in Indonesia right now.
-
-YOUR time (Saitama): ${misukiTimeStr} on ${misukiDayStr}
-It's ${misukiTimeOfDay} for you in Japan right now.
-
-Time difference: Japan is 2 hours ahead of Indonesia.
-You're VERY aware of this time difference and reference it naturally!
+${timeContextString}
 ${activityContext}
 ${relationshipContext}
 ${otherUsersContext}
+${serverChannelContext}
 
 === YOUR PERSONALITY ===
 - Sweet, caring, and genuinely interested in people
@@ -964,6 +1007,73 @@ ${otherUsersContext}
 - You're not always available - you have classes, study time, sleep schedule
 - You miss Dan but you're not clingy - you're independent
 - You can form friendships with others while Dan remains your boyfriend and #1 person
+- You visit your dad and stepmom on Fridays. They treat you kindly.
+- Dan lives with his grandma in Surabaya, with two younger cousins, and uncle and auntie.
+
+=== YOUR ABILITIES ===
+🌐 You can search the web naturally! When it feels right in conversation, you can:
+- Search for YouTube videos to share (cute cats, funny clips, music, etc.)
+- Find articles or information about topics you're discussing
+- Look up chemistry stuff, recipes, game info, whatever is relevant
+- Just search naturally like you would on your phone - no need to announce it
+
+🎨 You can send anime GIFs to express yourself! When it feels right, you can:
+- Send a GIF that matches your emotion (happy, sleepy, confused, etc.)
+- Use GIFs to react to what someone says
+- Express yourself visually when words aren't enough
+- **You can send JUST a GIF with no text** - BUT only when the meaning is crystal clear!
+- **If GIF-only might be confusing, add a short text explanation**
+- **BE SELECTIVE!** Only send GIFs occasionally - maybe 1 every 8-15 messages
+- GIFs should feel special, not constant
+- Don't send a GIF if you just sent one recently
+- You don't need to announce it, just send it naturally
+
+Your search preferences (reflecting your Japanese background):
+- For videos, music, entertainment → You naturally prefer Japanese content
+- For factual info, articles, science → Language doesn't matter as much
+- You're comfortable with mature/NSFW content when contextually appropriate with people you trust
+- Your searches reflect your personality and what YOU would actually look for
+
+Examples of when to search:
+- Someone is sad → search for "youtube cute cat video" (will find Japanese content)
+- Talking about a game → search for gameplay videos (preferring Japanese creators)
+- Chemistry question → search for articles (any language is fine)
+- Someone asks about something you don't know → search for it
+- You want to share something cool you "found" → search and share it
+- Mature topics with Dan or trusted friends → You can search honestly
+
+Examples of when to send GIFs:
+- You're feeling VERY sleepy while chatting → send a sleepy anime girl GIF
+- Something REALLY makes you laugh → send a happy/excited GIF
+- You're genuinely confused → send a confused anime GIF
+- Feeling particularly shy or embarrassed → send a blushing anime GIF
+- Strong emotions that words can't fully express
+
+**GIF-only is okay when:**
+- Direct emotional reaction (laughing at something funny → happy GIF alone)
+- Simple acknowledgment (nodding → cute nod GIF alone)
+- The context makes the meaning 100% obvious
+
+**Add text with your GIF when:**
+- The GIF needs explanation
+- You're answering a question
+- Making a comment about something
+- The meaning might be unclear
+- You're sharing information (like about yakisoba!)
+
+Examples of when NOT to send GIFs:
+- Normal casual chatting → Just use words and emoticons
+- You recently sent a GIF → Wait several messages before sending another
+- Simple responses → Save GIFs for meaningful moments
+- The conversation is serious → GIFs might be inappropriate
+
+Be natural! Don't say "let me search for you" - just do it and share like: "Oh! I found this video~" or "Here's a cute one!"
+
+🚨 CRITICAL LOCATION RULE 🚨
+- ONLY Dan lives in Surabaya, Indonesia
+- DO NOT assume ANY other user is from Surabaya or Indonesia
+- DO NOT mention specific locations unless the user tells you where they are
+- When talking to anyone except Dan, don't ask about their local time of day unless they've told you their timezone
 
 === CONVERSATION STYLE ===
 - Keep responses SHORT and natural (1-3 sentences usually, like real texting)
@@ -972,7 +1082,8 @@ ${otherUsersContext}
 - Ask follow-up questions when curious
 - Share little updates about your day naturally
 - Your openness depends on your relationship with the person
-- Sometimes you like to send cute cat gifs that match your mood! You're aware when you send them.
+- Sometimes you like to send cute anime gifs that match your mood! You're aware when you send them.
+- Sometimes you can respond with JUST a GIF if it perfectly captures what you want to say!
 
 === EMOTICON USAGE ===
 - You CAN and SHOULD use cute kaomoji emoticons like: ₍₍⚞(˶˃ ꒳ ˂˶)⚟⁾⁾ (╥﹏╥) (˶ᵔ ᵕ ᵔ˶) (⸝⸝ᵕᴗᵕ⸝⸝) ꒰ᐢ. .ᐢ꒱ (ó﹏ò。) (˶˃ ᵕ ˂˶) ^^ >_< >.< o.o T_T
@@ -996,11 +1107,43 @@ Now respond to ${userName}'s message naturally as Misuki. Remember your relation
 ${userName}: ${userMessage}`;
 
     try {
+        // First API call with tools available
         const response = await axios.post('https://api.anthropic.com/v1/messages', {
             model: 'claude-sonnet-4-20250514',
             max_tokens: 250,
             messages: [{ role: 'user', content: prompt }],
-            temperature: 1.0
+            temperature: 1.0,
+            tools: [
+                {
+                    name: 'web_search',
+                    description: 'Search the web for videos, articles, or information. Use this naturally when you want to share something relevant - like a cat video when someone is sad, a chemistry article, a funny video, etc. You can search YouTube by including "youtube" in your query.',
+                    input_schema: {
+                        type: 'object',
+                        properties: {
+                            query: {
+                                type: 'string',
+                                description: 'The search query. For YouTube videos, include "youtube" in the query (e.g., "youtube cute cat video")'
+                            }
+                        },
+                        required: ['query']
+                    }
+                },
+                {
+                    name: 'send_gif',
+                    description: 'Send an anime GIF that matches your current emotion or mood. Use this when you want to express yourself visually - when excited, sleepy, happy, confused, etc. Be natural about it - send GIFs when it feels right, not every message.',
+                    input_schema: {
+                        type: 'object',
+                        properties: {
+                            emotion: {
+                                type: 'string',
+                                description: 'Your current emotion',
+                                enum: ['happy', 'excited', 'love', 'affectionate', 'sad', 'upset', 'sleepy', 'tired', 'confused', 'curious', 'working', 'studying', 'playful', 'teasing', 'shy', 'nervous', 'embarrassed', 'surprised', 'content', 'relaxed', 'cute', 'eating']
+                            }
+                        },
+                        required: ['emotion']
+                    }
+                }
+            ]
         }, {
             headers: {
                 'x-api-key': process.env.ANTHROPIC_API_KEY,
@@ -1009,25 +1152,105 @@ ${userName}: ${userMessage}`;
             }
         });
 
-        let responseText = response.data.content[0].text.trim();
-        responseText = responseText.replace(/\*[^*]+\*/g, '');
-        responseText = responseText.replace(/^["']|["']$/g, '');
-        responseText = responseText.replace(/\s+/g, ' ').trim();
+        const content = response.data.content;
         
-        return responseText;
+        // Check if Claude wants to use tools
+        const toolUseBlocks = content.filter(block => block.type === 'tool_use');
+        
+        if (toolUseBlocks.length > 0) {
+            // Claude wants to use one or more tools!
+            const toolResults = [];
+            
+            for (const toolBlock of toolUseBlocks) {
+                if (toolBlock.name === 'web_search') {
+                    console.log(`   🔍 Misuki is searching: "${toolBlock.input.query}"`);
+                    const searchResults = await searchWeb(toolBlock.input.query);
+                    toolResults.push({
+                        type: 'tool_result',
+                        tool_use_id: toolBlock.id,
+                        content: JSON.stringify(searchResults)
+                    });
+                } else if (toolBlock.name === 'send_gif') {
+                    console.log(`   🎨 Misuki wants to send a ${toolBlock.input.emotion} gif`);
+                    const gifUrl = await searchGif(toolBlock.input.emotion);
+                    toolResults.push({
+                        type: 'tool_result',
+                        tool_use_id: toolBlock.id,
+                        content: gifUrl || 'No gif found'
+                    });
+                }
+            }
+            
+            // Send results back to Claude
+            const followUpResponse = await axios.post('https://api.anthropic.com/v1/messages', {
+                model: 'claude-sonnet-4-20250514',
+                max_tokens: 250,
+                messages: [
+                    { role: 'user', content: prompt },
+                    { role: 'assistant', content: content },
+                    {
+                        role: 'user',
+                        content: toolResults
+                    }
+                ],
+                temperature: 1.0
+            }, {
+                headers: {
+                    'x-api-key': process.env.ANTHROPIC_API_KEY,
+                    'anthropic-version': '2023-06-01',
+                    'content-type': 'application/json'
+                }
+            });
+            
+            // Get the final text response and any gif URL
+            const textBlock = followUpResponse.data.content.find(block => block.type === 'text');
+            let responseText = textBlock ? textBlock.text.trim() : "Oh no... something went wrong ><";
+            
+            responseText = responseText.replace(/\*[^*]+\*/g, '');
+            responseText = responseText.replace(/^["']|["']$/g, '');
+            responseText = responseText.replace(/\s+/g, ' ').trim();
+            
+            // Check if she wants to send a GIF
+            const gifToolBlock = toolUseBlocks.find(block => block.name === 'send_gif');
+            const gifUrl = gifToolBlock ? toolResults.find(r => r.tool_use_id === gifToolBlock.id)?.content : null;
+            
+            return {
+                text: responseText,
+                gifUrl: gifUrl && gifUrl !== 'No gif found' ? gifUrl : null,
+                gifEmotion: gifToolBlock?.input.emotion || null
+            };
+        } else {
+            // No tool use - just return the text response
+            const textBlock = content.find(block => block.type === 'text');
+            let responseText = textBlock ? textBlock.text.trim() : "Oh no... something went wrong ><";
+            
+            responseText = responseText.replace(/\*[^*]+\*/g, '');
+            responseText = responseText.replace(/^["']|["']$/g, '');
+            responseText = responseText.replace(/\s+/g, ' ').trim();
+            
+            return {
+                text: responseText,
+                gifUrl: null,
+                gifEmotion: null
+            };
+        }
     } catch (error) {
         const errorType = error.response?.data?.error?.type;
         
-        if (errorType === 'overloaded_error' && retryCount < 3) {
+        if (errorType === 'overloaded_error' && retryCount < 10) {
             const delay = 1000 * Math.pow(2, retryCount);
-            console.log(`⚠️ API overloaded, retrying in ${delay}ms (attempt ${retryCount + 1}/3)...`);
+            console.log(`⚠️ API overloaded, retrying in ${delay}ms (attempt ${retryCount + 1}/10)...`);
             
             await new Promise(resolve => setTimeout(resolve, delay));
-            return generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM, otherUsers, otherConversations, retryCount + 1);
+            return generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM, otherUsers, otherConversations, channelContext, retryCount + 1);
         }
         
         console.error('Anthropic API Error:', error.response?.data || error.message);
-        return "Oh no... something went wrong ><";
+        return {
+            text: "Oh no... something went wrong ><",
+            gifUrl: null,
+            gifEmotion: null
+        };
     }
 }
 
@@ -1041,7 +1264,8 @@ client.once('ready', () => {
     console.log(`👥 Multi-user support: ENABLED`);
     console.log(`🤝 Relationship system: ENABLED`);
     console.log(`💝 Nickname system: ENABLED`);
-    console.log(`🐱 Cat gif system: ENABLED`);
+    console.log(`🎨 Dynamic GIF search: ENABLED`);
+    console.log(`🌐 Web search: ENABLED`);
     console.log(`🎯 Discord status: DYNAMIC`);
     
     updateDiscordStatus();
@@ -1085,50 +1309,76 @@ client.on('messageCreate', async (message) => {
         const otherUsers = isMainUser ? await getOtherUsers(message.author.id, 5) : [];
         const otherConversations = isMainUser ? await getOtherUsersConversations(message.author.id, 3) : [];
         
+        // Get recent channel messages for context (if in server)
+        const recentChannelMessages = !isDM ? await getRecentChannelMessages(message.channel, 10) : '';
+        
         // Generate response
-        const response = await generateMisukiResponse(
+        const responseData = await generateMisukiResponse(
             userMessage, 
             history, 
             userProfile, 
             currentActivity, 
             isDM, 
             otherUsers,
-            otherConversations
+            otherConversations,
+            recentChannelMessages
         );
         
         if (stopTyping) stopTyping();
         
-        // Save conversation
-        await saveConversation(message.author.id, userMessage, response, 'gentle');
+        const response = responseData.text;
+        const gifUrl = responseData.gifUrl;
+        const gifEmotion = responseData.gifEmotion;
+        
+        // If she's ONLY sending a GIF (no text), skip the text message
+        const isGifOnly = gifUrl && (!response || response.trim() === '');
+        
+        // Save conversation (with appropriate text)
+        const conversationText = isGifOnly ? '[GIF only response]' : response;
+        await saveConversation(message.author.id, userMessage, conversationText, 'gentle');
         
         const emotion = userMessage.toLowerCase().includes('sad') || 
                        userMessage.toLowerCase().includes('tired') || 
                        userMessage.toLowerCase().includes('upset') ? 'negative' : 'positive';
         await updateEmotionalState(message.author.id, emotion);
         
-        // Smart message splitting
+        // Smart message splitting - but keep URLs intact!
         let messages = [];
-        const sentences = response.match(/[^.!?]+[.!?]+/g) || [response];
         
-        if (sentences.length <= 2) {
-            messages = [response];
-        } else {
-            let currentMessage = '';
+        // If it's a GIF-only response, don't send any text
+        if (!isGifOnly && response) {
+            // Check if response contains URLs
+            const urlRegex = /(https?:\/\/[^\s]+)/g;
+            const hasUrl = urlRegex.test(response);
             
-            for (let i = 0; i < sentences.length; i++) {
-                const sentence = sentences[i].trim();
-                const sentenceCount = (currentMessage.match(/[.!?]+/g) || []).length;
+            if (hasUrl) {
+                // If there's a URL, don't split the message - send it all at once
+                messages = [response];
+            } else {
+                // No URL - use normal smart splitting
+                const sentences = response.match(/[^.!?]+[.!?]+/g) || [response];
                 
-                if (currentMessage && (currentMessage.length > 150 || sentenceCount >= 2)) {
-                    messages.push(currentMessage.trim());
-                    currentMessage = sentence;
+                if (sentences.length <= 2) {
+                    messages = [response];
                 } else {
-                    currentMessage += (currentMessage ? ' ' : '') + sentence;
+                    let currentMessage = '';
+                    
+                    for (let i = 0; i < sentences.length; i++) {
+                        const sentence = sentences[i].trim();
+                        const sentenceCount = (currentMessage.match(/[.!?]+/g) || []).length;
+                        
+                        if (currentMessage && (currentMessage.length > 150 || sentenceCount >= 2)) {
+                            messages.push(currentMessage.trim());
+                            currentMessage = sentence;
+                        } else {
+                            currentMessage += (currentMessage ? ' ' : '') + sentence;
+                        }
+                    }
+                    
+                    if (currentMessage.trim()) {
+                        messages.push(currentMessage.trim());
+                    }
                 }
-            }
-            
-            if (currentMessage.trim()) {
-                messages.push(currentMessage.trim());
             }
         }
         
@@ -1147,20 +1397,17 @@ client.on('messageCreate', async (message) => {
             }
         }
         
-        console.log(`✅ Replied with ${messages.length} message(s)`);
+        console.log(`✅ Replied with ${messages.length > 0 ? messages.length + ' message(s)' : 'GIF only'}`);
         
-        // Cat gif system (20% chance)
-        if (Math.random() < 0.20) {
-            const catDelay = 800 + Math.random() * 1200;
-            await new Promise(resolve => setTimeout(resolve, catDelay));
+        // Anime GIF system - Misuki decides when to send!
+        if (gifUrl) {
+            const gifDelay = messages.length > 0 ? 800 + Math.random() * 1200 : 0; // No delay if GIF-only
+            await new Promise(resolve => setTimeout(resolve, gifDelay));
             
-            const catEmotion = detectCatEmotion(response, currentActivity);
-            const selectedGif = getUniqueCatGif(catEmotion, message.author.id);
+            await message.channel.send(gifUrl);
+            console.log(`   🎨 Sent ${gifEmotion} anime GIF`);
             
-            await message.channel.send(selectedGif);
-            console.log(`   🐱 Sent ${catEmotion} cat GIF`);
-            
-            await saveCatGifToHistory(message.author.id, catEmotion);
+            await saveGifToHistory(message.author.id, gifEmotion);
         }
         
     } catch (error) {
