@@ -25,7 +25,8 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.DirectMessages,
-        GatewayIntentBits.DirectMessageTyping
+        GatewayIntentBits.DirectMessageTyping,
+        GatewayIntentBits.GuildPresences
     ],
     partials: [Partials.Channel]
 });
@@ -52,14 +53,14 @@ async function connectDB() {
 
 async function getUserProfile(discordId, username) {
     const [rows] = await db.execute(
-        'SELECT * FROM user_profiles WHERE discord_id = ?',
+        'SELECT * FROM users WHERE discord_id = ?',
         [discordId]
     );
     
     if (rows.length > 0) {
         // Update last interaction and message count
         await db.execute(
-            `UPDATE user_profiles 
+            `UPDATE users 
              SET last_interaction = NOW(), total_messages = total_messages + 1 
              WHERE discord_id = ?`,
             [discordId]
@@ -72,14 +73,14 @@ async function getUserProfile(discordId, username) {
         const relationshipNotes = isMainUser ? 'My boyfriend Dan ❤️' : 'Just met';
         
         await db.execute(
-            `INSERT INTO user_profiles 
+            `INSERT INTO users 
              (discord_id, username, display_name, trust_level, relationship_notes, total_messages) 
              VALUES (?, ?, ?, ?, ?, 1)`,
             [discordId, username, username, trustLevel, relationshipNotes]
         );
         
         const [newRows] = await db.execute(
-            'SELECT * FROM user_profiles WHERE discord_id = ?',
+            'SELECT * FROM users WHERE discord_id = ?',
             [discordId]
         );
         return newRows[0];
@@ -90,7 +91,7 @@ async function getOtherUsers(currentUserId, limit = 5) {
     const [rows] = await db.execute(
         `SELECT discord_id, username, display_name, nickname, trust_level, 
                 total_messages, relationship_notes
-         FROM user_profiles 
+         FROM users 
          WHERE discord_id != ? AND total_messages > 0
          ORDER BY last_interaction DESC 
          LIMIT ?`,
@@ -112,14 +113,14 @@ async function getOtherUsersConversations(currentUserId, limit = 3) {
              WHERE user_id = ? AND user_message != ''
              ORDER BY timestamp DESC 
              LIMIT ?`,
-            [user.discord_id, limit]
+            [user.user_id, limit]
         );
         
         if (rows.length > 0) {
             const userName = user.nickname || user.display_name || user.username;
             conversationSnippets.push({
                 user: userName,
-                userId: user.discord_id,
+                userId: user.user_id,
                 trustLevel: user.trust_level,
                 messages: rows.reverse() // oldest first
             });
@@ -352,7 +353,7 @@ function getMisukiWeeklySchedule() {
             { time: '20:00', activity: 'Free time relaxing', emoji: '😌', type: 'free' },
             { time: '23:00', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal' },
             { time: '23:30', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal' },
-            { time: '00:00', activity: 'Sleeping', emoji: '😴', type: 'sleep' }
+            { time: '23:45', activity: 'Sleeping', emoji: '😴', type: 'sleep' }
         ],
         sunday: [
             { time: '07:00', activity: 'Waking up for church', emoji: '😴', type: 'personal' },
@@ -772,15 +773,152 @@ async function getRecentChannelMessages(channel, limit = 10) {
     }
 }
 
+async function getDanActivity() {
+    try {
+        // Try to get Dan from cache first
+        let dan = client.users.cache.get(MAIN_USER_ID);
+        
+        // If not in cache, try to fetch
+        if (!dan) {
+            try {
+                dan = await client.users.fetch(MAIN_USER_ID);
+            } catch (e) {
+                console.log('Could not fetch Dan\'s user data');
+                return null;
+            }
+        }
+        
+        // Get Dan's presence from all guilds
+        let presence = null;
+        for (const guild of client.guilds.cache.values()) {
+            const member = guild.members.cache.get(MAIN_USER_ID);
+            if (member && member.presence) {
+                presence = member.presence;
+                break;
+            }
+        }
+        
+        if (!presence) return null;
+        
+        const activities = presence.activities;
+        if (!activities || activities.length === 0) return null;
+        
+        const meaningfulActivities = [];
+        
+        for (const activity of activities) {
+            // Spotify
+            if (activity.type === 2) { // Listening
+                if (activity.name === 'Spotify' && activity.details) {
+                    meaningfulActivities.push({
+                        type: 'spotify',
+                        song: activity.details,
+                        artist: activity.state || 'Unknown artist',
+                        album: activity.assets?.largeText || null
+                    });
+                }
+            }
+            // Playing games
+            else if (activity.type === 0) { // Playing
+                meaningfulActivities.push({
+                    type: 'gaming',
+                    game: activity.name,
+                    details: activity.details || null,
+                    state: activity.state || null
+                });
+            }
+            // Streaming
+            else if (activity.type === 1) { // Streaming
+                meaningfulActivities.push({
+                    type: 'streaming',
+                    title: activity.name,
+                    url: activity.url || null
+                });
+            }
+            // Watching
+            else if (activity.type === 3) { // Watching
+                meaningfulActivities.push({
+                    type: 'watching',
+                    content: activity.name
+                });
+            }
+            // Custom status (only if it has text/emoji)
+            else if (activity.type === 4) { // Custom
+                if (activity.state || activity.emoji) {
+                    meaningfulActivities.push({
+                        type: 'custom',
+                        text: activity.state || '',
+                        emoji: activity.emoji?.name || null
+                    });
+                }
+            }
+        }
+        
+        return meaningfulActivities.length > 0 ? meaningfulActivities : null;
+    } catch (error) {
+        console.error('Error getting Dan\'s activity:', error.message);
+        return null;
+    }
+}
+
+// Format Dan's activity for context
+function formatDanActivity(activities) {
+    if (!activities || activities.length === 0) return '';
+    
+    let contextText = '\n=== 🎮 DAN\'S CURRENT ACTIVITY ===\n';
+    
+    for (const activity of activities) {
+        if (activity.type === 'spotify') {
+            contextText += `Dan is listening to Spotify right now! 🎵\n`;
+            contextText += `Song: "${activity.song}"\n`;
+            contextText += `Artist: ${activity.artist}\n`;
+            if (activity.album) {
+                contextText += `Album: ${activity.album}\n`;
+            }
+            contextText += `(You can comment on his music taste, ask about the song, etc.)\n`;
+        }
+        else if (activity.type === 'gaming') {
+            contextText += `Dan is playing a game right now! 🎮\n`;
+            contextText += `Game: ${activity.game}\n`;
+            if (activity.details) {
+                contextText += `Details: ${activity.details}\n`;
+            }
+            if (activity.state) {
+                contextText += `Status: ${activity.state}\n`;
+            }
+            contextText += `(You can ask about the game, tease him playfully, etc.)\n`;
+        }
+        else if (activity.type === 'streaming') {
+            contextText += `Dan is streaming right now! 📡\n`;
+            contextText += `Title: ${activity.title}\n`;
+            if (activity.url) {
+                contextText += `URL: ${activity.url}\n`;
+            }
+        }
+        else if (activity.type === 'watching') {
+            contextText += `Dan is watching: ${activity.content} 👀\n`;
+        }
+        else if (activity.type === 'custom') {
+            contextText += `Dan's custom status: ${activity.emoji || ''} ${activity.text}\n`;
+        }
+    }
+    
+    contextText += '================================\n';
+    
+    return contextText;
+}
+
 // =========================================
 // GENERATE MISUKI'S RESPONSE (WITH MULTI-USER SUPPORT)
 // =========================================
+
+// Replace your generateMisukiResponse function with this improved version
 
 async function generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM = true, otherUsers = [], otherConversations = [], channelContext = '', retryCount = 0) {
     const userName = userProfile.nickname || userProfile.display_name || userProfile.username;
     const isMainUser = userProfile.discord_id === MAIN_USER_ID;
     const trustLevel = userProfile.trust_level;
     
+    // ... (keep all the context building code the same) ...
     // Build conversation context with timestamps
     let context = '';
     conversationHistory.forEach(conv => {
@@ -978,6 +1116,14 @@ You're comfortable sharing with Dan about your interactions with others.
 `;
     }
 
+    // 🆕 ADD THIS NEW SECTION RIGHT HERE:
+    // Get Dan's current activity (Spotify, games, etc.)
+    let danActivityContext = '';
+    if (isMainUser) {
+        const danActivities = await getDanActivity();
+        danActivityContext = formatDanActivity(danActivities);
+    }
+
     const prompt = `You are Misuki Tanaka, a caring 19-year-old Japanese university student at Saitama University, studying chemistry. You live in Saitama, Japan with your mom Sara Akiyama (your parents are separated - your dad lives elsewhere). You're in a loving long-distance relationship with Dan (danthevegetable), who lives in Surabaya, Indonesia.
 
 === CRITICAL CONTEXT: DISCORD vs WEB APP ===
@@ -996,6 +1142,7 @@ ${timeContextString}
 ${activityContext}
 ${relationshipContext}
 ${otherUsersContext}
+${danActivityContext}
 ${serverChannelContext}
 
 === YOUR PERSONALITY ===
@@ -1106,14 +1253,17 @@ Now respond to ${userName}'s message naturally as Misuki. Remember your relation
 
 ${userName}: ${userMessage}`;
 
-    try {
-        // First API call with tools available
-        const response = await axios.post('https://api.anthropic.com/v1/messages', {
+    // Helper function to make API call with retry logic
+    async function makeAPICall(messages, includeTools = true) {
+        const config = {
             model: 'claude-sonnet-4-20250514',
             max_tokens: 250,
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 1.0,
-            tools: [
+            messages: messages,
+            temperature: 1.0
+        };
+        
+        if (includeTools) {
+            config.tools = [
                 {
                     name: 'web_search',
                     description: 'Search the web for videos, articles, or information. Use this naturally when you want to share something relevant - like a cat video when someone is sad, a chemistry article, a funny video, etc. You can search YouTube by including "youtube" in your query.',
@@ -1143,15 +1293,22 @@ ${userName}: ${userMessage}`;
                         required: ['emotion']
                     }
                 }
-            ]
-        }, {
+            ];
+        }
+        
+        return await axios.post('https://api.anthropic.com/v1/messages', config, {
             headers: {
                 'x-api-key': process.env.ANTHROPIC_API_KEY,
                 'anthropic-version': '2023-06-01',
                 'content-type': 'application/json'
-            }
+            },
+            timeout: 30000
         });
+    }
 
+    try {
+        // First API call with tools available
+        const response = await makeAPICall([{ role: 'user', content: prompt }], true);
         const content = response.data.content;
         
         // Check if Claude wants to use tools
@@ -1162,45 +1319,42 @@ ${userName}: ${userMessage}`;
             const toolResults = [];
             
             for (const toolBlock of toolUseBlocks) {
-                if (toolBlock.name === 'web_search') {
-                    console.log(`   🔍 Misuki is searching: "${toolBlock.input.query}"`);
-                    const searchResults = await searchWeb(toolBlock.input.query);
+                try {
+                    if (toolBlock.name === 'web_search') {
+                        console.log(`   🔍 Misuki is searching: "${toolBlock.input.query}"`);
+                        const searchResults = await searchWeb(toolBlock.input.query);
+                        toolResults.push({
+                            type: 'tool_result',
+                            tool_use_id: toolBlock.id,
+                            content: JSON.stringify(searchResults)
+                        });
+                    } else if (toolBlock.name === 'send_gif') {
+                        console.log(`   🎨 Misuki wants to send a ${toolBlock.input.emotion} gif`);
+                        const gifUrl = await searchGif(toolBlock.input.emotion);
+                        toolResults.push({
+                            type: 'tool_result',
+                            tool_use_id: toolBlock.id,
+                            content: gifUrl || 'No gif found'
+                        });
+                    }
+                } catch (toolError) {
+                    // If a tool fails, provide error result but don't crash
+                    console.error(`⚠️ Tool ${toolBlock.name} failed:`, toolError.message);
                     toolResults.push({
                         type: 'tool_result',
                         tool_use_id: toolBlock.id,
-                        content: JSON.stringify(searchResults)
-                    });
-                } else if (toolBlock.name === 'send_gif') {
-                    console.log(`   🎨 Misuki wants to send a ${toolBlock.input.emotion} gif`);
-                    const gifUrl = await searchGif(toolBlock.input.emotion);
-                    toolResults.push({
-                        type: 'tool_result',
-                        tool_use_id: toolBlock.id,
-                        content: gifUrl || 'No gif found'
+                        content: 'Tool temporarily unavailable',
+                        is_error: true
                     });
                 }
             }
             
-            // Send results back to Claude
-            const followUpResponse = await axios.post('https://api.anthropic.com/v1/messages', {
-                model: 'claude-sonnet-4-20250514',
-                max_tokens: 250,
-                messages: [
-                    { role: 'user', content: prompt },
-                    { role: 'assistant', content: content },
-                    {
-                        role: 'user',
-                        content: toolResults
-                    }
-                ],
-                temperature: 1.0
-            }, {
-                headers: {
-                    'x-api-key': process.env.ANTHROPIC_API_KEY,
-                    'anthropic-version': '2023-06-01',
-                    'content-type': 'application/json'
-                }
-            });
+            // Send results back to Claude (with retry logic)
+            const followUpResponse = await makeAPICall([
+                { role: 'user', content: prompt },
+                { role: 'assistant', content: content },
+                { role: 'user', content: toolResults }
+            ], false);
             
             // Get the final text response and any gif URL
             const textBlock = followUpResponse.data.content.find(block => block.type === 'text');
@@ -1235,17 +1389,47 @@ ${userName}: ${userMessage}`;
             };
         }
     } catch (error) {
+        // Enhanced error detection and retry logic
         const errorType = error.response?.data?.error?.type;
+        const errorMessage = error.response?.data?.error?.message || error.message;
+        const statusCode = error.response?.status;
         
-        if (errorType === 'overloaded_error' && retryCount < 10) {
-            const delay = 1000 * Math.pow(2, retryCount);
-            console.log(`⚠️ API overloaded, retrying in ${delay}ms (attempt ${retryCount + 1}/10)...`);
+        // List of errors that should be retried
+        const retryableErrors = [
+            'overloaded_error',
+            'rate_limit_error', 
+            'timeout',
+            'ECONNRESET',
+            'ETIMEDOUT',
+            'ENOTFOUND',
+            'ECONNREFUSED'
+        ];
+        
+        const shouldRetry = retryableErrors.some(err => 
+            errorType?.includes(err) || 
+            errorMessage?.includes(err) ||
+            error.code?.includes(err)
+        ) || (statusCode >= 500 && statusCode < 600); // Retry on 5xx errors
+        
+        if (shouldRetry && retryCount < 10) {
+            // Exponential backoff: 1s, 2s, 4s, 8s, etc. (max 16s)
+            const delay = Math.min(1000 * Math.pow(2, retryCount), 16000);
+            console.log(`⚠️ API error (${errorType || error.code || statusCode}), retrying in ${delay}ms (attempt ${retryCount + 1}/10)...`);
+            console.log(`   Error details: ${errorMessage}`);
             
             await new Promise(resolve => setTimeout(resolve, delay));
             return generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM, otherUsers, otherConversations, channelContext, retryCount + 1);
         }
         
-        console.error('Anthropic API Error:', error.response?.data || error.message);
+        // Log detailed error info for debugging
+        console.error('❌ Anthropic API Error (no retry):');
+        console.error('   Type:', errorType || 'unknown');
+        console.error('   Status:', statusCode || 'unknown');
+        console.error('   Message:', errorMessage);
+        console.error('   Code:', error.code);
+        console.error('   Full error:', error.response?.data || error.message);
+        console.error('Error generating Misuki response:', error);
+        
         return {
             text: "Oh no... something went wrong ><",
             gifUrl: null,
@@ -1302,8 +1486,8 @@ client.on('messageCreate', async (message) => {
         const currentActivity = getMisukiCurrentActivity();
         console.log(`📅 Current activity: ${currentActivity.activity} ${currentActivity.emoji}`);
         
-        // Get conversation history for this specific user
-        const history = await getConversationHistory(message.author.id, 10);
+        // Get conversation history for this specific user (using user_id)
+        const history = await getConversationHistory(userProfile.user_id, 10);
         
         // Get other users context (only for main user)
         const otherUsers = isMainUser ? await getOtherUsers(message.author.id, 5) : [];
@@ -1333,14 +1517,14 @@ client.on('messageCreate', async (message) => {
         // If she's ONLY sending a GIF (no text), skip the text message
         const isGifOnly = gifUrl && (!response || response.trim() === '');
         
-        // Save conversation (with appropriate text)
+        // Save conversation (with appropriate text) - use user_id from profile
         const conversationText = isGifOnly ? '[GIF only response]' : response;
-        await saveConversation(message.author.id, userMessage, conversationText, 'gentle');
+        await saveConversation(userProfile.user_id, userMessage, conversationText, 'gentle');
         
         const emotion = userMessage.toLowerCase().includes('sad') || 
                        userMessage.toLowerCase().includes('tired') || 
                        userMessage.toLowerCase().includes('upset') ? 'negative' : 'positive';
-        await updateEmotionalState(message.author.id, emotion);
+        await updateEmotionalState(userProfile.user_id, emotion);
         
         // Smart message splitting - but keep URLs intact!
         let messages = [];
@@ -1407,7 +1591,7 @@ client.on('messageCreate', async (message) => {
             await message.channel.send(gifUrl);
             console.log(`   🎨 Sent ${gifEmotion} anime GIF`);
             
-            await saveGifToHistory(message.author.id, gifEmotion);
+            await saveGifToHistory(userProfile.user_id, gifEmotion);
         }
         
     } catch (error) {
