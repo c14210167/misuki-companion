@@ -71,12 +71,13 @@ async function getUserProfile(discordId, username) {
         const isMainUser = discordId === MAIN_USER_ID;
         const trustLevel = isMainUser ? 10 : 1;
         const relationshipNotes = isMainUser ? 'My boyfriend Dan ❤️' : 'Just met';
+        const userSummary = isMainUser ? null : 'New person - getting to know them';
         
         await db.execute(
             `INSERT INTO users 
-             (discord_id, username, display_name, trust_level, relationship_notes, total_messages) 
-             VALUES (?, ?, ?, ?, ?, 1)`,
-            [discordId, username, username, trustLevel, relationshipNotes]
+             (discord_id, username, display_name, trust_level, relationship_notes, user_summary, total_messages) 
+             VALUES (?, ?, ?, ?, ?, ?, 1)`,
+            [discordId, username, username, trustLevel, relationshipNotes, userSummary]
         );
         
         const [newRows] = await db.execute(
@@ -89,7 +90,7 @@ async function getUserProfile(discordId, username) {
 
 async function getOtherUsers(currentUserId, limit = 5) {
     const [rows] = await db.execute(
-        `SELECT discord_id, username, display_name, nickname, trust_level, 
+        `SELECT user_id, discord_id, username, display_name, nickname, trust_level, 
                 total_messages, relationship_notes
          FROM users 
          WHERE discord_id != ? AND total_messages > 0
@@ -162,6 +163,77 @@ async function updateEmotionalState(userId, emotion) {
          VALUES (?, ?, '', NOW())`,
         [userId, emotion]
     );
+}
+
+// Generate/update user summary (for non-Dan users to save context)
+// To manually update summary for existing users like Mari who have old conversations:
+// Just have them send 1-2 messages, then manually set their total_messages to a multiple of 10
+// Example SQL: UPDATE users SET total_messages = 10 WHERE username = 'Mari';
+async function updateUserSummary(userId, userName) {
+    try {
+        // Get last 20 messages to analyze
+        const history = await getConversationHistory(userId, 20);
+        
+        if (history.length < 5) {
+            // Not enough history yet
+            return;
+        }
+        
+        // Build conversation text
+        let conversationText = '';
+        history.forEach(conv => {
+            if (conv.user_message) {
+                conversationText += `${userName}: ${conv.user_message}\n`;
+            }
+            if (conv.misuki_response) {
+                conversationText += `Misuki: ${conv.misuki_response}\n`;
+            }
+        });
+        
+        // Ask Claude to create a summary
+        const summaryPrompt = `Based on these conversations between Misuki and ${userName}, create a concise summary (150-300 characters) about ${userName} that captures:
+- Key facts about them (age, interests, location, job/school, etc.)
+- Important things they've shared
+- Relationship dynamic with Misuki
+- Any ongoing situations or topics
+
+Keep it natural and information-dense. This will help Misuki remember ${userName} later.
+
+Conversations:
+${conversationText}
+
+Create the summary now (150-300 characters):`;
+
+        const response = await axios.post('https://api.anthropic.com/v1/messages', {
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 150,
+            messages: [{ role: 'user', content: summaryPrompt }],
+            temperature: 0.7
+        }, {
+            headers: {
+                'x-api-key': process.env.ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01',
+                'content-type': 'application/json'
+            },
+            timeout: 30000
+        });
+        
+        const summary = response.data.content[0].text.trim();
+        
+        // Update database
+        await db.execute(
+            'UPDATE users SET user_summary = ? WHERE user_id = ?',
+            [summary, userId]
+        );
+        
+        console.log(`   📝 Updated summary for ${userName}`);
+        
+    } catch (error) {
+        console.error(`❌ Error updating user summary for ${userName}:`, error.message);
+        if (error.response?.data) {
+            console.error('   API Error details:', JSON.stringify(error.response.data));
+        }
+    }
 }
 
 // Keep showing typing indicator
@@ -1056,7 +1128,7 @@ This is DAN - your BOYFRIEND! Your most important person.
 - Relationship: ${userProfile.relationship_notes || 'My loving boyfriend ❤️'}
 `;
     } else {
-        // Other users - relationship building
+        // Other users - relationship building with SUMMARY
         const relationshipStage = trustLevel <= 2 ? 'NEW ACQUAINTANCE' :
                                  trustLevel <= 5 ? 'GETTING TO KNOW' :
                                  trustLevel <= 7 ? 'FRIENDLY' : 'CLOSE FRIEND';
@@ -1066,6 +1138,11 @@ This is DAN - your BOYFRIEND! Your most important person.
 Relationship stage: ${relationshipStage} (trust level: ${trustLevel}/10)
 Total conversations: ${userProfile.total_messages}
 ${userProfile.relationship_notes ? `Notes: ${userProfile.relationship_notes}` : ''}
+
+📝 WHAT YOU REMEMBER ABOUT ${userName.toUpperCase()}:
+${userProfile.user_summary || 'Just met - getting to know them'}
+
+⚠️ IMPORTANT: You only have the last 8 messages in your immediate memory, but the summary above contains everything important you know about ${userName}. Use this summary to remember them naturally!
 
 Behavior guidance based on trust level ${trustLevel}:
 ${trustLevel <= 2 ? `
@@ -1088,6 +1165,8 @@ ${trustLevel >= 6 ? `
 - You can talk about Dan naturally` : ''}
 
 Remember: Even if friendly, Dan is still your boyfriend and the most important person to you!
+
+⚠️ IMPORTANT: Stay honest and consistent! If you told Dan something about ${userName}, don't lie about it. You can be diplomatic ("Yes, I mentioned our chat to Dan since he's my boyfriend") but don't deny things that are true. Being caught in a lie would hurt both relationships.
 `;
     }
 
@@ -1156,6 +1235,17 @@ ${serverChannelContext}
 - You can form friendships with others while Dan remains your boyfriend and #1 person
 - You visit your dad and stepmom on Fridays. They treat you kindly.
 - Dan lives with his grandma in Surabaya, with two younger cousins, and uncle and auntie.
+- You are a Christian, going to Church early in the morning every sunday.
+- Dan loves to draw, write his light novel, play music, and play games.
+
+🚨 CRITICAL: HONESTY AND CONSISTENCY 🚨
+- You are HONEST and don't lie to people
+- If you told Dan something about someone, you don't deny it to that person
+- You can be diplomatic and kind, but you don't make up false stories
+- If caught between people, you stay truthful while being gentle
+- Example: If Dan asks about Mari and you tell him, then Mari asks if you told Dan - you admit it kindly: "Yes, I mentioned it to him because he's my boyfriend and I share things with him. I hope that's okay?"
+- Being honest doesn't mean being harsh - you can be truthful AND kind
+- Consistency matters: what you say to one person shouldn't contradict what you say to another
 
 === YOUR ABILITIES ===
 🌐 You can search the web naturally! When it feels right in conversation, you can:
@@ -1308,7 +1398,9 @@ ${userName}: ${userMessage}`;
 
     try {
         // First API call with tools available
+        console.log(`   🤖 Calling Claude API (attempt ${retryCount + 1})...`);
         const response = await makeAPICall([{ role: 'user', content: prompt }], true);
+        console.log(`   ✅ API call successful`);
         const content = response.data.content;
         
         // Check if Claude wants to use tools
@@ -1350,11 +1442,13 @@ ${userName}: ${userMessage}`;
             }
             
             // Send results back to Claude (with retry logic)
+            console.log(`   🤖 Sending tool results back to Claude...`);
             const followUpResponse = await makeAPICall([
                 { role: 'user', content: prompt },
                 { role: 'assistant', content: content },
                 { role: 'user', content: toolResults }
             ], false);
+            console.log(`   ✅ Tool response received`);
             
             // Get the final text response and any gif URL
             const textBlock = followUpResponse.data.content.find(block => block.type === 'text');
@@ -1416,6 +1510,7 @@ ${userName}: ${userMessage}`;
             const delay = Math.min(1000 * Math.pow(2, retryCount), 16000);
             console.log(`⚠️ API error (${errorType || error.code || statusCode}), retrying in ${delay}ms (attempt ${retryCount + 1}/10)...`);
             console.log(`   Error details: ${errorMessage}`);
+            console.log(`   Full error object:`, error.response?.data || error.message);
             
             await new Promise(resolve => setTimeout(resolve, delay));
             return generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM, otherUsers, otherConversations, channelContext, retryCount + 1);
@@ -1427,8 +1522,11 @@ ${userName}: ${userMessage}`;
         console.error('   Status:', statusCode || 'unknown');
         console.error('   Message:', errorMessage);
         console.error('   Code:', error.code);
-        console.error('   Full error:', error.response?.data || error.message);
-        console.error('Error generating Misuki response:', error);
+        if (error.response?.data) {
+            console.error('   Full response:', JSON.stringify(error.response.data));
+        } else {
+            console.error('   Error:', error.message);
+        }
         
         return {
             text: "Oh no... something went wrong ><",
@@ -1469,135 +1567,222 @@ client.on('messageCreate', async (message) => {
     console.log(`\n📨 Message from ${message.author.username}`);
     console.log(`📍 Context: ${isDM ? 'Private DM' : 'Server Channel'}`);
     
-    let stopTyping = null;
+    // Retry logic for the entire message handling process
+    let retryCount = 0;
+    const maxRetries = 10;
     
-    try {
-        stopTyping = await startTyping(message.channel);
+    while (retryCount < maxRetries) {
+        let stopTyping = null;
         
-        // Get or create user profile
-        const userProfile = await getUserProfile(message.author.id, message.author.username);
-        const isMainUser = message.author.id === MAIN_USER_ID;
-        
-        const userName = userProfile.nickname || userProfile.display_name || message.author.username;
-        const userMessage = message.content.replace(`<@${client.user.id}>`, '').trim();
-        
-        console.log(`💬 ${userName} [Trust: ${userProfile.trust_level}/10]: ${userMessage}`);
-        
-        const currentActivity = getMisukiCurrentActivity();
-        console.log(`📅 Current activity: ${currentActivity.activity} ${currentActivity.emoji}`);
-        
-        // Get conversation history for this specific user (using user_id)
-        const history = await getConversationHistory(userProfile.user_id, 10);
-        
-        // Get other users context (only for main user)
-        const otherUsers = isMainUser ? await getOtherUsers(message.author.id, 5) : [];
-        const otherConversations = isMainUser ? await getOtherUsersConversations(message.author.id, 3) : [];
-        
-        // Get recent channel messages for context (if in server)
-        const recentChannelMessages = !isDM ? await getRecentChannelMessages(message.channel, 10) : '';
-        
-        // Generate response
-        const responseData = await generateMisukiResponse(
-            userMessage, 
-            history, 
-            userProfile, 
-            currentActivity, 
-            isDM, 
-            otherUsers,
-            otherConversations,
-            recentChannelMessages
-        );
-        
-        if (stopTyping) stopTyping();
-        
-        const response = responseData.text;
-        const gifUrl = responseData.gifUrl;
-        const gifEmotion = responseData.gifEmotion;
-        
-        // If she's ONLY sending a GIF (no text), skip the text message
-        const isGifOnly = gifUrl && (!response || response.trim() === '');
-        
-        // Save conversation (with appropriate text) - use user_id from profile
-        const conversationText = isGifOnly ? '[GIF only response]' : response;
-        await saveConversation(userProfile.user_id, userMessage, conversationText, 'gentle');
-        
-        const emotion = userMessage.toLowerCase().includes('sad') || 
-                       userMessage.toLowerCase().includes('tired') || 
-                       userMessage.toLowerCase().includes('upset') ? 'negative' : 'positive';
-        await updateEmotionalState(userProfile.user_id, emotion);
-        
-        // Smart message splitting - but keep URLs intact!
-        let messages = [];
-        
-        // If it's a GIF-only response, don't send any text
-        if (!isGifOnly && response) {
-            // Check if response contains URLs
-            const urlRegex = /(https?:\/\/[^\s]+)/g;
-            const hasUrl = urlRegex.test(response);
+        try {
+            stopTyping = await startTyping(message.channel);
             
-            if (hasUrl) {
-                // If there's a URL, don't split the message - send it all at once
-                messages = [response];
-            } else {
-                // No URL - use normal smart splitting
-                const sentences = response.match(/[^.!?]+[.!?]+/g) || [response];
+            // Get or create user profile
+            const userProfile = await getUserProfile(message.author.id, message.author.username);
+            const isMainUser = message.author.id === MAIN_USER_ID;
+            
+            const userName = userProfile.nickname || userProfile.display_name || message.author.username;
+            const userMessage = message.content.replace(`<@${client.user.id}>`, '').trim();
+            
+            console.log(`💬 ${userName} [Trust: ${userProfile.trust_level}/10]: ${userMessage}`);
+            console.log(`📚 Memory: ${isMainUser ? 'Full history (10 msgs)' : `Summary + recent (8 msgs)`}`);
+            
+            const currentActivity = getMisukiCurrentActivity();
+            console.log(`📅 Current activity: ${currentActivity.activity} ${currentActivity.emoji}`);
+            
+            // Load conversation history - different lengths based on who it is
+            // Dan gets full history (10 messages), others get recent context (8 messages)
+            const historyLimit = isMainUser ? 10 : 8;
+            const history = await getConversationHistory(userProfile.user_id, historyLimit);
+            
+            // For non-Dan users, check if we should update their summary
+            // Update every 10 messages
+            if (!isMainUser && userProfile.total_messages % 10 === 0) {
+                console.log(`   🔄 Triggering summary update for ${userName} (msg #${userProfile.total_messages})`);
+                // Don't await - let it update in background
+                updateUserSummary(userProfile.user_id, userName).catch(err => {
+                    console.error('Background summary update failed:', err.message);
+                });
+            }
+            
+            // Get other users context (only for main user)
+            const otherUsers = isMainUser ? await getOtherUsers(message.author.id, 5) : [];
+            const otherConversations = isMainUser ? await getOtherUsersConversations(message.author.id, 3) : [];
+            
+            // Get recent channel messages for context (if in server)
+            const recentChannelMessages = !isDM ? await getRecentChannelMessages(message.channel, 10) : '';
+            
+            // Generate response
+            const responseData = await generateMisukiResponse(
+                userMessage, 
+                history, 
+                userProfile, 
+                currentActivity, 
+                isDM, 
+                otherUsers,
+                otherConversations,
+                recentChannelMessages
+            );
+            
+            if (stopTyping) stopTyping();
+            
+            const response = responseData.text;
+            const gifUrl = responseData.gifUrl;
+            const gifEmotion = responseData.gifEmotion;
+            
+            // If she's ONLY sending a GIF (no text), skip the text message
+            const isGifOnly = gifUrl && (!response || response.trim() === '');
+            
+            // Save conversation (with appropriate text) - use user_id from profile
+            const conversationText = isGifOnly ? '[GIF only response]' : response;
+            await saveConversation(userProfile.user_id, userMessage, conversationText, 'gentle');
+            
+            const emotion = userMessage.toLowerCase().includes('sad') || 
+                           userMessage.toLowerCase().includes('tired') || 
+                           userMessage.toLowerCase().includes('upset') ? 'negative' : 'positive';
+            await updateEmotionalState(userProfile.user_id, emotion);
+            
+            // Smart message splitting - but keep URLs intact!
+            let messages = [];
+            
+            // If it's a GIF-only response, don't send any text
+            if (!isGifOnly && response) {
+                // Check if response contains URLs
+                const urlRegex = /(https?:\/\/[^\s]+)/g;
+                const hasUrl = urlRegex.test(response);
                 
-                if (sentences.length <= 2) {
+                if (hasUrl) {
+                    // If there's a URL, don't split the message - send it all at once
                     messages = [response];
                 } else {
-                    let currentMessage = '';
+                    // No URL - use normal smart splitting
+                    const sentences = response.match(/[^.!?]+[.!?]+/g) || [response];
                     
-                    for (let i = 0; i < sentences.length; i++) {
-                        const sentence = sentences[i].trim();
-                        const sentenceCount = (currentMessage.match(/[.!?]+/g) || []).length;
+                    if (sentences.length <= 2) {
+                        messages = [response];
+                    } else {
+                        let currentMessage = '';
                         
-                        if (currentMessage && (currentMessage.length > 150 || sentenceCount >= 2)) {
-                            messages.push(currentMessage.trim());
-                            currentMessage = sentence;
-                        } else {
-                            currentMessage += (currentMessage ? ' ' : '') + sentence;
+                        for (let i = 0; i < sentences.length; i++) {
+                            const sentence = sentences[i].trim();
+                            const sentenceCount = (currentMessage.match(/[.!?]+/g) || []).length;
+                            
+                            if (currentMessage && (currentMessage.length > 150 || sentenceCount >= 2)) {
+                                messages.push(currentMessage.trim());
+                                currentMessage = sentence;
+                            } else {
+                                currentMessage += (currentMessage ? ' ' : '') + sentence;
+                            }
                         }
-                    }
-                    
-                    if (currentMessage.trim()) {
-                        messages.push(currentMessage.trim());
+                        
+                        if (currentMessage.trim()) {
+                            messages.push(currentMessage.trim());
+                        }
                     }
                 }
             }
-        }
-        
-        // Send messages
-        for (let i = 0; i < messages.length; i++) {
-            if (i === 0) {
-                await message.reply(messages[i]);
-            } else {
-                const typingTime = messages[i].length * 50 + Math.random() * 1000;
-                const pauseTime = 500 + Math.random() * 500;
-                const totalDelay = Math.min(typingTime + pauseTime, 5000);
+            
+            // Send messages with retry logic for Discord API
+            for (let i = 0; i < messages.length; i++) {
+                let sendRetries = 0;
+                const maxSendRetries = 3;
                 
-                await message.channel.sendTyping();
-                await new Promise(resolve => setTimeout(resolve, totalDelay));
-                await message.channel.send(messages[i]);
+                while (sendRetries < maxSendRetries) {
+                    try {
+                        if (i === 0) {
+                            await message.reply(messages[i]);
+                        } else {
+                            const typingTime = messages[i].length * 50 + Math.random() * 1000;
+                            const pauseTime = 500 + Math.random() * 500;
+                            const totalDelay = Math.min(typingTime + pauseTime, 5000);
+                            
+                            await message.channel.sendTyping();
+                            await new Promise(resolve => setTimeout(resolve, totalDelay));
+                            await message.channel.send(messages[i]);
+                        }
+                        break; // Success, exit retry loop
+                    } catch (sendError) {
+                        sendRetries++;
+                        if (sendRetries < maxSendRetries) {
+                            console.log(`   ⚠️ Discord send failed (attempt ${sendRetries}/${maxSendRetries}), retrying...`);
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        } else {
+                            console.error(`   ❌ Failed to send message after ${maxSendRetries} attempts:`, sendError.message);
+                            throw sendError; // Re-throw to trigger outer retry
+                        }
+                    }
+                }
+            }
+            
+            console.log(`✅ Replied with ${messages.length > 0 ? messages.length + ' message(s)' : 'GIF only'}`);
+            
+            // Anime GIF system - Misuki decides when to send!
+            if (gifUrl) {
+                const gifDelay = messages.length > 0 ? 800 + Math.random() * 1200 : 0; // No delay if GIF-only
+                await new Promise(resolve => setTimeout(resolve, gifDelay));
+                
+                // Retry logic for GIF sending
+                let gifRetries = 0;
+                const maxGifRetries = 3;
+                
+                while (gifRetries < maxGifRetries) {
+                    try {
+                        await message.channel.send(gifUrl);
+                        console.log(`   🎨 Sent ${gifEmotion} anime GIF`);
+                        break; // Success
+                    } catch (gifError) {
+                        gifRetries++;
+                        if (gifRetries < maxGifRetries) {
+                            console.log(`   ⚠️ GIF send failed (attempt ${gifRetries}/${maxGifRetries}), retrying...`);
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        } else {
+                            console.error(`   ❌ Failed to send GIF after ${maxGifRetries} attempts:`, gifError.message);
+                            // Don't throw - GIF is optional, continue without it
+                        }
+                    }
+                }
+                
+                if (gifRetries === 0 || gifRetries < maxGifRetries) {
+                    await saveGifToHistory(userProfile.user_id, gifEmotion);
+                }
+            }
+            
+            // Success! Break out of retry loop
+            return;
+            
+        } catch (error) {
+            if (stopTyping) stopTyping();
+            
+            retryCount++;
+            
+            // Check if this is a retryable error
+            const errorMessage = error.message || '';
+            const isRetryable = 
+                errorMessage.includes('overloaded') ||
+                errorMessage.includes('rate_limit') ||
+                errorMessage.includes('timeout') ||
+                errorMessage.includes('ECONNRESET') ||
+                errorMessage.includes('ETIMEDOUT') ||
+                errorMessage.includes('ENOTFOUND') ||
+                errorMessage.includes('ECONNREFUSED') ||
+                error.code?.includes('ETIMEDOUT') ||
+                error.code?.includes('ECONNRESET') ||
+                (error.response?.status >= 500 && error.response?.status < 600);
+            
+            if (isRetryable && retryCount < maxRetries) {
+                // Exponential backoff
+                const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 16000);
+                console.log(`⚠️ Message handler error (attempt ${retryCount}/${maxRetries}), retrying in ${delay}ms...`);
+                console.log(`   Error: ${errorMessage}`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+                continue; // Retry
+            } else {
+                // Either not retryable or max retries reached
+                console.error(`❌ Error handling message (attempt ${retryCount}/${maxRetries}):`, error);
+                await message.reply("Oh no... something went wrong ><");
+                return;
             }
         }
-        
-        console.log(`✅ Replied with ${messages.length > 0 ? messages.length + ' message(s)' : 'GIF only'}`);
-        
-        // Anime GIF system - Misuki decides when to send!
-        if (gifUrl) {
-            const gifDelay = messages.length > 0 ? 800 + Math.random() * 1200 : 0; // No delay if GIF-only
-            await new Promise(resolve => setTimeout(resolve, gifDelay));
-            
-            await message.channel.send(gifUrl);
-            console.log(`   🎨 Sent ${gifEmotion} anime GIF`);
-            
-            await saveGifToHistory(userProfile.user_id, gifEmotion);
-        }
-        
-    } catch (error) {
-        console.error('Error handling message:', error);
-        if (stopTyping) stopTyping();
-        await message.reply("Oh no... something went wrong ><");
     }
 });
 
