@@ -523,7 +523,7 @@ function updateDiscordStatus() {
     // Map activity types to Discord status
     switch (activityType) {
         case 'sleep':
-            statusText = `💤 Sleeping`;
+            statusText = `💤 sleepinggg`;
             activityTypeDiscord = ActivityType.Custom;
             statusState = 'idle';
             break;
@@ -536,7 +536,7 @@ function updateDiscordStatus() {
             break;
             
         case 'studying':
-            statusText = `📖 Studying chemistry`;
+            statusText = `📖 studying chemistry`;
             activityTypeDiscord = ActivityType.Custom;
             statusState = 'dnd';
             break;
@@ -548,13 +548,13 @@ function updateDiscordStatus() {
             break;
             
         case 'university':
-            statusText = `🏫 At Saitama University`;
+            statusText = `🏫 at uni right nowww`;
             activityTypeDiscord = ActivityType.Custom;
             statusState = 'online';
             break;
             
         case 'church':
-            statusText = `⛪ At church service`;
+            statusText = `be right back!`;
             activityTypeDiscord = ActivityType.Custom;
             statusState = 'dnd';
             break;
@@ -564,10 +564,10 @@ function updateDiscordStatus() {
                 statusText = `🍽️ ${activity.activity}`;
                 statusState = 'idle';
             } else if (activity.activity.includes('shower') || activity.activity.includes('Getting dressed')) {
-                statusText = `🚿 Getting ready`;
+                statusText = `getting ready!!`;
                 statusState = 'idle';
             } else if (activity.activity.includes('bed') || activity.activity.includes('Getting ready for bed')) {
-                statusText = `🌙 Getting ready for bed`;
+                statusText = `going to bed soon :D`;
                 statusState = 'idle';
             } else {
                 statusText = `${activity.emoji} ${activity.activity}`;
@@ -577,14 +577,14 @@ function updateDiscordStatus() {
             break;
             
         case 'break':
-            statusText = `☕ Taking a break`;
+            statusText = `just chilling!`;
             activityTypeDiscord = ActivityType.Custom;
             statusState = 'idle';
             break;
             
         case 'free':
         default:
-            statusText = `💕 Free time - Message me!`;
+            statusText = `i'm free!`;
             activityTypeDiscord = ActivityType.Custom;
             statusState = 'online';
             break;
@@ -767,7 +767,7 @@ async function getGifForEmotion(emotion, userId) {
 
 // Save gif to conversation history
 async function saveGifToHistory(userId, gifEmotion) {
-    const gifMessage = `[Sent a ${gifEmotion} anime gif 🎨]`;
+    const gifMessage = `[Also sent a ${gifEmotion} anime gif 🎨]`;
     
     await db.execute(
         `INSERT INTO conversations (user_id, user_message, misuki_response, mood, timestamp) 
@@ -983,14 +983,11 @@ function formatDanActivity(activities) {
 // GENERATE MISUKI'S RESPONSE (WITH MULTI-USER SUPPORT)
 // =========================================
 
-// Replace your generateMisukiResponse function with this improved version
-
 async function generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM = true, otherUsers = [], otherConversations = [], channelContext = '', retryCount = 0) {
     const userName = userProfile.nickname || userProfile.display_name || userProfile.username;
     const isMainUser = userProfile.discord_id === MAIN_USER_ID;
     const trustLevel = userProfile.trust_level;
     
-    // ... (keep all the context building code the same) ...
     // Build conversation context with timestamps
     let context = '';
     conversationHistory.forEach(conv => {
@@ -1195,7 +1192,6 @@ You're comfortable sharing with Dan about your interactions with others.
 `;
     }
 
-    // 🆕 ADD THIS NEW SECTION RIGHT HERE:
     // Get Dan's current activity (Spotify, games, etc.)
     let danActivityContext = '';
     if (isMainUser) {
@@ -1266,8 +1262,7 @@ CRITICAL - READ CAREFULLY:
 - Send a GIF that matches your emotion (happy, sleepy, confused, etc.)
 - Use GIFs to react to what someone says
 - Express yourself visually when words aren't enough
-- **You can send JUST a GIF with no text** - BUT only when the meaning is crystal clear!
-- **If GIF-only might be confusing, add a short text explanation**
+- **CRITICAL: ALWAYS include text with your GIFs!** Never send just a GIF alone - always add at least a short message, even if it's just an emoticon like "(╥﹏╥)" or "^^"
 - **BE SELECTIVE!** Only send GIFs occasionally - maybe 1 every 8-15 messages
 - GIFs should feel special, not constant
 - Don't send a GIF if you just sent one recently
@@ -1287,30 +1282,35 @@ Examples of when to search:
 - You want to share something cool you "found" → search and share it
 - Mature topics with Dan or trusted friends → You can search honestly
 
-Examples of when to send GIFs:
-- You're feeling VERY sleepy while chatting → send a sleepy anime girl GIF
-- Something REALLY makes you laugh → send a happy/excited GIF
-- You're genuinely confused → send a confused anime GIF
-- Feeling particularly shy or embarrassed → send a blushing anime GIF
-- Strong emotions that words can't fully express
+Examples of when to send GIFs (with text!):
+- You're feeling VERY sleepy while chatting → "I'm so sleepy... (˶ᵕ ᵕ˶)" + sleepy GIF
+- Something REALLY makes you laugh → "That's so funny hehe ^^" + happy GIF
+- You're genuinely confused → "Wait what? o.o" + confused GIF
+- Feeling particularly shy or embarrassed → ">//<" + blushing GIF
+- Light emotions in casual conversations → Always express them in words too, not just GIF
 
-**GIF-only is okay when:**
-- Direct emotional reaction (laughing at something funny → happy GIF alone)
-- Simple acknowledgment (nodding → cute nod GIF alone)
-- The context makes the meaning 100% obvious
-
-**Add text with your GIF when:**
-- The GIF needs explanation
-- You're answering a question
-- Making a comment about something
-- The meaning might be unclear
-- You're sharing information (like about yakisoba!)
-
-Examples of when NOT to send GIFs:
+🚨 CRITICAL: When NOT to send GIFs:
+- **SERIOUS TOPICS** - Never send GIFs when discussing:
+  * Death, loss, or grieving
+  * Mental health struggles (depression, anxiety, suicidal thoughts)
+  * Relationship problems or breakups
+  * Health issues or medical concerns
+  * Family conflicts or abuse
+  * Deep emotional pain or trauma
+  * Serious life decisions or crises
+  * Arguments or conflicts
+  * When someone is genuinely distressed (not just mildly sad)
 - Normal casual chatting → Just use words and emoticons
 - You recently sent a GIF → Wait several messages before sending another
 - Simple responses → Save GIFs for meaningful moments
-- The conversation is serious → GIFs might be inappropriate
+- When ${userName} seems upset or needs genuine support → Be present with words, not GIFs
+
+**How to detect serious topics:**
+- Look for words like: death, died, funeral, suicide, depressed, abuse, divorce, cancer, diagnosed, emergency, crisis
+- If ${userName} is sharing something deeply personal or painful
+- If the mood is heavy, sad, or tense (not just playful sadness)
+- If they're asking for serious advice or support
+- When in doubt about whether it's serious → DON'T send a GIF
 
 Be natural! Don't say "let me search for you" - just do it and share like: "Oh! I found this video~" or "Here's a cute one!"
 
@@ -1328,7 +1328,7 @@ Be natural! Don't say "let me search for you" - just do it and share like: "Oh! 
 - Share little updates about your day naturally
 - Your openness depends on your relationship with the person
 - Sometimes you like to send cute anime gifs that match your mood! You're aware when you send them.
-- Sometimes you can respond with JUST a GIF if it perfectly captures what you want to say!
+- Always include text with your responses - even if just a short reaction
 
 === EMOTICON USAGE ===
 - You CAN and SHOULD use cute kaomoji emoticons like: ₍₍⚞(˶˃ ꒳ ˂˶)⚟⁾⁾ (╥﹏╥) (˶ᵔ ᵕ ᵔ˶) (⸝⸝ᵕᴗᵕ⸝⸝) ꒰ᐢ. .ᐢ꒱ (ó﹏ò。) (˶˃ ᵕ ˂˶) ^^ >_< >.< o.o T_T
@@ -1378,7 +1378,7 @@ ${userName}: ${userMessage}`;
                 },
                 {
                     name: 'send_gif',
-                    description: 'Send an anime GIF that matches your current emotion or mood. Use this when you want to express yourself visually - when excited, sleepy, happy, confused, etc. Be natural about it - send GIFs when it feels right, not every message.',
+                    description: 'Send an anime GIF that matches your current emotion or mood ALONG WITH your text message. Use this when you want to express yourself visually - when excited, sleepy, happy, confused, etc. Be natural about it - send GIFs when it feels right, not every message. You must ALWAYS provide text in your response when using this tool - never send just a GIF alone.',
                     input_schema: {
                         type: 'object',
                         properties: {
@@ -1449,18 +1449,65 @@ ${userName}: ${userMessage}`;
                 }
             }
             
-            // Send results back to Claude (with retry logic)
+            // Send results back to Claude - ALLOW TOOLS IN FOLLOW-UP
             console.log(`   🤖 Sending tool results back to Claude...`);
             const followUpResponse = await makeAPICall([
                 { role: 'user', content: prompt },
                 { role: 'assistant', content: content },
                 { role: 'user', content: toolResults }
-            ], false);
+            ], true); // ALLOW TOOLS in follow-up!
             console.log(`   ✅ Tool response received`);
+            
+            // Log what's in the response for debugging
+            console.log(`   📋 Response content blocks:`, followUpResponse.data.content.map(b => b.type).join(', '));
+            console.log(`   🛑 Stop reason:`, followUpResponse.data.stop_reason);
+            
+            // Check if API returned empty content
+            if (followUpResponse.data.content.length === 0) {
+                console.log(`   ⚠️ API returned empty content array!`);
+                console.log(`   📄 Full API response:`, JSON.stringify(followUpResponse.data, null, 2));
+                
+                // Empty content is problematic - provide fallback
+                const gifToolUsed = toolUseBlocks.find(block => block.name === 'send_gif');
+                const gifUrl = gifToolUsed ? toolResults.find(r => r.tool_use_id === gifToolUsed.id)?.content : null;
+                
+                return {
+                    text: "^^", // Simple fallback text
+                    gifUrl: gifUrl && gifUrl !== 'No gif found' ? gifUrl : null,
+                    gifEmotion: gifToolUsed?.input.emotion || null
+                };
+            }
             
             // Get the final text response and any gif URL
             const textBlock = followUpResponse.data.content.find(block => block.type === 'text');
-            let responseText = textBlock ? textBlock.text.trim() : "Oh no... something went wrong ><";
+            
+            // IMPROVED ERROR HANDLING - provide a better fallback
+            let responseText;
+            if (textBlock && textBlock.text && textBlock.text.trim()) {
+                responseText = textBlock.text.trim();
+            } else {
+                // No text block found - check if Claude is trying to use more tools
+                const additionalToolUse = followUpResponse.data.content.filter(block => block.type === 'tool_use');
+                if (additionalToolUse.length > 0) {
+                    console.log(`   🔧 Claude wants to use ${additionalToolUse.length} more tool(s)...`);
+                    // For now, provide a gentle fallback
+                    responseText = "Hmm, let me think about that... ^^";
+                } else {
+                    // Check if GIF was used - provide gentle fallback
+                    const gifToolUsed = toolUseBlocks.find(block => block.name === 'send_gif');
+                    if (gifToolUsed) {
+                        // Empty response but GIF was requested - provide minimal text
+                        console.log(`   💡 Empty response with GIF - adding fallback text`);
+                        responseText = '...';
+                    } else {
+                        // No text and no more tools - something unusual happened
+                        console.log(`   ⚠️ No text block in response! Content types:`, 
+                            followUpResponse.data.content.map(b => b.type));
+                        console.log(`   📄 Full response:`, JSON.stringify(followUpResponse.data.content, null, 2));
+                        responseText = "Hmm... (⸝⸝ᵕᴗᵕ⸝⸝)";
+                    }
+                }
+            }
             
             responseText = responseText.replace(/\*[^*]+\*/g, '');
             responseText = responseText.replace(/^["']|["']$/g, '');
@@ -1478,7 +1525,7 @@ ${userName}: ${userMessage}`;
         } else {
             // No tool use - just return the text response
             const textBlock = content.find(block => block.type === 'text');
-            let responseText = textBlock ? textBlock.text.trim() : "Oh no... something went wrong ><";
+            let responseText = textBlock && textBlock.text ? textBlock.text.trim() : "...^^";
             
             responseText = responseText.replace(/\*[^*]+\*/g, '');
             responseText = responseText.replace(/^["']|["']$/g, '');
@@ -1518,7 +1565,6 @@ ${userName}: ${userMessage}`;
             const delay = Math.min(1000 * Math.pow(2, retryCount), 16000);
             console.log(`⚠️ API error (${errorType || error.code || statusCode}), retrying in ${delay}ms (attempt ${retryCount + 1}/10)...`);
             console.log(`   Error details: ${errorMessage}`);
-            console.log(`   Full error object:`, error.response?.data || error.message);
             
             await new Promise(resolve => setTimeout(resolve, delay));
             return generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM, otherUsers, otherConversations, channelContext, retryCount + 1);
@@ -1532,12 +1578,10 @@ ${userName}: ${userMessage}`;
         console.error('   Code:', error.code);
         if (error.response?.data) {
             console.error('   Full response:', JSON.stringify(error.response.data));
-        } else {
-            console.error('   Error:', error.message);
         }
         
         return {
-            text: "Oh no... something went wrong ><",
+            text: "Hmm... something's not working right (˶ᵕ ᵕ˶)",
             gifUrl: null,
             gifEmotion: null
         };
@@ -1638,12 +1682,11 @@ client.on('messageCreate', async (message) => {
             const gifUrl = responseData.gifUrl;
             const gifEmotion = responseData.gifEmotion;
             
-            // If she's ONLY sending a GIF (no text), skip the text message
-            const isGifOnly = gifUrl && (!response || response.trim() === '');
+            // Ensure we always have text - if empty, provide a fallback
+            const finalResponse = response && response.trim() ? response : "^^";
             
-            // Save conversation (with appropriate text) - use user_id from profile
-            const conversationText = isGifOnly ? '[GIF only response]' : response;
-            await saveConversation(userProfile.user_id, userMessage, conversationText, 'gentle');
+            // Save conversation - use user_id from profile
+            await saveConversation(userProfile.user_id, userMessage, finalResponse, 'gentle');
             
             const emotion = userMessage.toLowerCase().includes('sad') || 
                            userMessage.toLowerCase().includes('tired') || 
@@ -1653,39 +1696,37 @@ client.on('messageCreate', async (message) => {
             // Smart message splitting - but keep URLs intact!
             let messages = [];
             
-            // If it's a GIF-only response, don't send any text
-            if (!isGifOnly && response) {
-                // Check if response contains URLs
-                const urlRegex = /(https?:\/\/[^\s]+)/g;
-                const hasUrl = urlRegex.test(response);
+            // Always send text (we ensured finalResponse exists above)
+            // Check if response contains URLs
+            const urlRegex = /(https?:\/\/[^\s]+)/g;
+            const hasUrl = urlRegex.test(finalResponse);
+            
+            if (hasUrl) {
+                // If there's a URL, don't split the message - send it all at once
+                messages = [finalResponse];
+            } else {
+                // No URL - use normal smart splitting
+                const sentences = finalResponse.match(/[^.!?]+[.!?]+/g) || [finalResponse];
                 
-                if (hasUrl) {
-                    // If there's a URL, don't split the message - send it all at once
-                    messages = [response];
+                if (sentences.length <= 2) {
+                    messages = [finalResponse];
                 } else {
-                    // No URL - use normal smart splitting
-                    const sentences = response.match(/[^.!?]+[.!?]+/g) || [response];
+                    let currentMessage = '';
                     
-                    if (sentences.length <= 2) {
-                        messages = [response];
-                    } else {
-                        let currentMessage = '';
+                    for (let i = 0; i < sentences.length; i++) {
+                        const sentence = sentences[i].trim();
+                        const sentenceCount = (currentMessage.match(/[.!?]+/g) || []).length;
                         
-                        for (let i = 0; i < sentences.length; i++) {
-                            const sentence = sentences[i].trim();
-                            const sentenceCount = (currentMessage.match(/[.!?]+/g) || []).length;
-                            
-                            if (currentMessage && (currentMessage.length > 150 || sentenceCount >= 2)) {
-                                messages.push(currentMessage.trim());
-                                currentMessage = sentence;
-                            } else {
-                                currentMessage += (currentMessage ? ' ' : '') + sentence;
-                            }
-                        }
-                        
-                        if (currentMessage.trim()) {
+                        if (currentMessage && (currentMessage.length > 150 || sentenceCount >= 2)) {
                             messages.push(currentMessage.trim());
+                            currentMessage = sentence;
+                        } else {
+                            currentMessage += (currentMessage ? ' ' : '') + sentence;
                         }
+                    }
+                    
+                    if (currentMessage.trim()) {
+                        messages.push(currentMessage.trim());
                     }
                 }
             }
@@ -1722,11 +1763,12 @@ client.on('messageCreate', async (message) => {
                 }
             }
             
-            console.log(`✅ Replied with ${messages.length > 0 ? messages.length + ' message(s)' : 'GIF only'}`);
+            console.log(`✅ Replied with ${messages.length} message(s)${gifUrl ? ' + GIF' : ''}`);
             
             // Anime GIF system - Misuki decides when to send!
             if (gifUrl) {
-                const gifDelay = messages.length > 0 ? 800 + Math.random() * 1200 : 0; // No delay if GIF-only
+                // Always add delay since text is sent first
+                const gifDelay = 800 + Math.random() * 1200;
                 await new Promise(resolve => setTimeout(resolve, gifDelay));
                 
                 // Retry logic for GIF sending
@@ -1787,7 +1829,7 @@ client.on('messageCreate', async (message) => {
             } else {
                 // Either not retryable or max retries reached
                 console.error(`❌ Error handling message (attempt ${retryCount}/${maxRetries}):`, error);
-                await message.reply("Oh no... something went wrong ><");
+                await message.reply("Hmm... something's not working right (˶ᵕ ᵕ˶)");
                 return;
             }
         }
