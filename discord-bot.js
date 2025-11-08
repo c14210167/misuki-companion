@@ -31,20 +31,27 @@ const client = new Client({
     partials: [Partials.Channel]
 });
 
-// Database connection
+// Database connection pool (FIXED: prevents timeout issues!)
 let db;
 
 // Your Discord ID (the main user - Dan)
 const MAIN_USER_ID = '406105172780122113';
 
 async function connectDB() {
-    db = await mysql.createConnection({
+    // Use connection pool instead of single connection
+    // This automatically handles reconnections and prevents timeout errors!
+    db = mysql.createPool({
         host: 'localhost',
         user: 'root',
         password: '',
-        database: 'misuki_companion'
+        database: 'misuki_companion',
+        waitForConnections: true,
+        connectionLimit: 10,
+        queueLimit: 0,
+        enableKeepAlive: true,
+        keepAliveInitialDelay: 0
     });
-    console.log('✅ Connected to MySQL database!');
+    console.log('✅ Connected to MySQL database pool!');
 }
 
 // =========================================
@@ -1601,6 +1608,7 @@ client.once('ready', () => {
     console.log(`🎨 Dynamic GIF search: ENABLED`);
     console.log(`🌐 Web search: ENABLED`);
     console.log(`🎯 Discord status: DYNAMIC`);
+    console.log(`🔄 MySQL connection: POOLED (prevents timeout errors)`);
     
     updateDiscordStatus();
     setInterval(updateDiscordStatus, 5 * 60 * 1000);
