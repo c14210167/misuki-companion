@@ -37,6 +37,18 @@ let db;
 // Your Discord ID (the main user - Dan)
 const MAIN_USER_ID = '406105172780122113';
 
+// Status history tracking (for variety and awareness)
+const statusHistory = [];
+const MAX_STATUS_HISTORY = 5;
+
+// Proactive messaging tracking
+let lastMajorActivityType = null;
+let lastProactiveMessageTime = 0;
+
+// Proactive messaging tracking
+let lastProactiveCheck = null; // Track last activity we checked
+let lastMessageTimes = {}; // Track last message time per user
+
 async function connectDB() {
     // Use connection pool instead of single connection
     // This automatically handles reconnections and prevents timeout errors!
@@ -170,6 +182,241 @@ async function updateEmotionalState(userId, emotion) {
          VALUES (?, ?, '', NOW())`,
         [userId, emotion]
     );
+}
+
+// =========================================
+// PROACTIVE MESSAGING SYSTEM
+// =========================================
+
+// Get last message time with Dan (either direction)
+async function getLastMessageTime() {
+    try {
+        const [danProfile] = await db.execute(
+            'SELECT user_id FROM users WHERE discord_id = ?',
+            [MAIN_USER_ID]
+        );
+        
+        if (danProfile.length === 0) return 0;
+        
+        const [rows] = await db.execute(
+            'SELECT MAX(timestamp) as last_time FROM conversations WHERE user_id = ?',
+            [danProfile[0].user_id]
+        );
+        
+        if (rows.length > 0 && rows[0].last_time) {
+            return new Date(rows[0].last_time).getTime();
+        }
+        return 0;
+    } catch (error) {
+        console.error('Error getting last message time:', error);
+        return Date.now(); // Fail safe - pretend we just messaged
+    }
+}
+
+// Check if we should send a proactive message based on activity transition
+async function checkProactiveMessage() {
+    const currentActivity = getMisukiCurrentActivity();
+    const currentType = currentActivity.type;
+    
+    // Only check if activity type has changed
+    if (currentType === lastMajorActivityType) {
+        return;
+    }
+    
+    // Define meaningful transitions with probabilities
+    const transitions = {
+        'free': { probability: 0.50, reasons: ['finished what i was doing', 'have some free time now', 'nothing much going on'] },
+        'personal_waking': { probability: 0.75, reasons: ['just woke up', 'morning!', 'good morning'] },
+        'personal_arriving_home': { probability: 0.60, reasons: ['finally home', 'just got home', 'back from uni'] }
+    };
+    
+    // Determine if this is a meaningful transition
+    let transitionKey = null;
+    let transitionReasons = [];
+    let probability = 0;
+    
+    // Check for waking up (sleep → personal in early morning)
+    if (lastMajorActivityType === 'sleep' && currentType === 'personal') {
+        const now = new Date();
+        const saitamaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+        const hour = saitamaTime.getHours();
+        
+        if (hour >= 5 && hour <= 8) {
+            transitionKey = 'personal_waking';
+            transitionReasons = transitions[transitionKey].reasons;
+            probability = transitions[transitionKey].probability;
+        }
+    }
+    
+    // Check for arriving home (commute → personal in afternoon/evening)
+    else if (lastMajorActivityType === 'commute' && currentType === 'personal') {
+        const now = new Date();
+        const saitamaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+        const hour = saitamaTime.getHours();
+        
+        if (hour >= 15 && hour <= 18) {
+            transitionKey = 'personal_arriving_home';
+            transitionReasons = transitions[transitionKey].reasons;
+            probability = transitions[transitionKey].probability;
+        }
+    }
+    
+    // Check for free time transitions
+    else if (currentType === 'free' && ['studying', 'class', 'lab', 'university'].includes(lastMajorActivityType)) {
+        transitionKey = 'free';
+        transitionReasons = transitions[transitionKey].reasons;
+        probability = transitions[transitionKey].probability;
+    }
+    
+    // Update last activity type for next check
+    lastMajorActivityType = currentType;
+    
+    // If no meaningful transition detected, skip
+    if (!transitionKey) {
+        return;
+    }
+    
+    // Check time constraint: must be 30 minutes since last message
+    const lastMessageTime = await getLastMessageTime();
+    const timeSinceLastMessage = Date.now() - lastMessageTime;
+    const thirtyMinutes = 30 * 60 * 1000;
+    
+    if (timeSinceLastMessage < thirtyMinutes) {
+        console.log(`   ⏰ Proactive message skipped: Only ${Math.round(timeSinceLastMessage / 60000)} minutes since last message`);
+        return;
+    }
+    
+    // Check time since last proactive message (prevent spam)
+    const timeSinceLastProactive = Date.now() - lastProactiveMessageTime;
+    if (timeSinceLastProactive < thirtyMinutes) {
+        console.log(`   ⏰ Proactive message skipped: Only ${Math.round(timeSinceLastProactive / 60000)} minutes since last proactive message`);
+        return;
+    }
+    
+    // Roll the dice!
+    const roll = Math.random();
+    if (roll > probability) {
+        console.log(`   🎲 Proactive message skipped: Rolled ${(roll * 100).toFixed(0)}% (needed <${(probability * 100).toFixed(0)}%)`);
+        return;
+    }
+    
+    console.log(`   ✅ Proactive message triggered! Transition: ${transitionKey}, Roll: ${(roll * 100).toFixed(0)}% (needed <${(probability * 100).toFixed(0)}%)`);
+    
+    // Send proactive message!
+    await sendProactiveMessage(transitionKey, transitionReasons, currentActivity);
+}
+
+// Send a proactive message to Dan
+async function sendProactiveMessage(transitionKey, reasons, currentActivity) {
+    try {
+        // Get Dan's user object
+        const dan = await client.users.fetch(MAIN_USER_ID);
+        if (!dan) {
+            console.log('   ❌ Could not fetch Dan\'s user object');
+            return;
+        }
+        
+        // Get Dan's profile from database
+        const userProfile = await getUserProfile(MAIN_USER_ID, 'danthevegetable');
+        
+        // Get conversation history
+        const history = await getConversationHistory(userProfile.user_id, 10);
+        
+        // Get Dan's current activity
+        const danActivities = await getDanActivity();
+        const danActivityContext = formatDanActivity(danActivities);
+        
+        // Build context for the proactive message
+        const now = new Date();
+        const saitamaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+        const jakartaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
+        
+        const misukiTimeStr = saitamaTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        const danTimeStr = jakartaTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        
+        let context = '';
+        history.forEach(conv => {
+            if (conv.user_message) {
+                context += `Dan: ${conv.user_message}\n`;
+            }
+            if (conv.misuki_response) {
+                context += `Misuki: ${conv.misuki_response}\n`;
+            }
+        });
+        
+        const currentStatus = getCurrentStatus();
+        
+        const prompt = `You are Misuki Tanaka, Dan's girlfriend. You're initiating a conversation with Dan on Discord.
+
+=== CONTEXT ===
+You just transitioned to: ${currentActivity.activity} ${currentActivity.emoji}
+Your current Discord status: "${currentStatus}"
+Transition reason: ${transitionKey}
+
+Your time in Japan: ${misukiTimeStr}
+Dan's time in Indonesia: ${danTimeStr}
+
+${danActivityContext}
+
+=== RECENT CONVERSATION HISTORY ===
+${context || '(No recent conversation)'}
+
+=== YOUR TASK ===
+Send Dan a natural, spontaneous message because you just ${reasons[Math.floor(Math.random() * reasons.length)]}!
+
+Guidelines:
+- Keep it SHORT (1-2 sentences, like a real text)
+- Be natural and sweet
+- Match the time of day and context
+- Reference what you're doing if relevant
+- If Dan is doing something (Spotify/gaming), you can comment on it
+- Use emoticons like ^^ (˶ᵔ ᵕ ᵔ˶) >.<
+- NO asterisks (*) or actions
+- Sound spontaneous, not scripted
+
+Examples:
+"just got home from uni... so tireddd (˶ᵕ ᵕ˶)"
+"morning! ^^ did you sleep well?"
+"finally done with homework... my brain hurts T_T"
+"you're still up? hehe"
+
+Your message:`;
+
+        const response = await axios.post('https://api.anthropic.com/v1/messages', {
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 150,
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 1.0
+        }, {
+            headers: {
+                'x-api-key': process.env.ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01',
+                'content-type': 'application/json'
+            },
+            timeout: 30000
+        });
+        
+        let message = response.data.content[0].text.trim();
+        
+        // Clean up the message
+        message = message.replace(/\*[^*]+\*/g, '');
+        message = message.replace(/^["']|["']$/g, '');
+        message = message.replace(/\s+/g, ' ').trim();
+        
+        // Send the DM
+        await dan.send(message);
+        
+        // Save to conversation history
+        await saveConversation(userProfile.user_id, '', message, 'proactive');
+        
+        // Update last proactive message time
+        lastProactiveMessageTime = Date.now();
+        
+        console.log(`   💌 Proactive message sent: "${message}"`);
+        
+    } catch (error) {
+        console.error('   ❌ Error sending proactive message:', error.message);
+    }
 }
 
 // Generate/update user summary (for non-Dan users to save context)
@@ -518,83 +765,211 @@ function getMisukiCurrentActivity() {
     return currentActivity;
 }
 
-// UPDATE DISCORD STATUS BASED ON SCHEDULE
+// Get current Discord status (for Misuki's awareness)
+function getCurrentStatus() {
+    if (statusHistory.length === 0) return null;
+    return statusHistory[statusHistory.length - 1];
+}
+
+// UPDATE DISCORD STATUS BASED ON SCHEDULE (WITH VARIATIONS!)
 function updateDiscordStatus() {
     const activity = getMisukiCurrentActivity();
     const activityType = activity.type;
     
-    let statusText = '';
+    // Check for proactive messaging opportunity (async, don't wait)
+    checkProactiveMessage().catch(err => {
+        console.error('Error checking proactive message:', err);
+    });
+    
+    let statusOptions = [];
     let activityTypeDiscord = ActivityType.Custom;
     let statusState = 'online'; // online, idle, dnd, invisible
     
-    // Map activity types to Discord status
+    // Map activity types to Discord status with MULTIPLE VARIATIONS
     switch (activityType) {
         case 'sleep':
-            statusText = `💤 sleepinggg`;
-            activityTypeDiscord = ActivityType.Custom;
+            statusOptions = [
+                '💤 sleepinggg',
+                '😴 zzz...',
+                '💤 sleeping~',
+                '😴 in dreamland',
+                '💤 fast asleep',
+                '😴 sleeping peacefully'
+            ];
             statusState = 'idle';
             break;
             
         case 'class':
         case 'lab':
-            statusText = `📚 In ${activity.activity}`;
-            activityTypeDiscord = ActivityType.Custom;
+            statusOptions = [
+                `📚 in ${activity.activity}`,
+                `🧪 ${activity.activity} rn`,
+                '📖 in class atm',
+                '🎓 lecture time!',
+                '📚 learning chemistry',
+                '🧪 lab work~'
+            ];
             statusState = 'dnd'; // Do Not Disturb during class
             break;
             
         case 'studying':
-            statusText = `📖 studying chemistry`;
-            activityTypeDiscord = ActivityType.Custom;
+            statusOptions = [
+                '📖 studying chemistry',
+                '✏️ doing homework',
+                '📚 study time!',
+                '📝 working on assignments',
+                '📖 chemistry homework...',
+                '✏️ studying rn',
+                '📚 homework grind'
+            ];
             statusState = 'dnd';
             break;
             
         case 'commute':
-            statusText = `🚃 ${activity.activity}`;
-            activityTypeDiscord = ActivityType.Custom;
+            if (activity.activity.includes('train')) {
+                statusOptions = [
+                    '🚃 on the train',
+                    '🚃 train ride~',
+                    '🚃 commuting',
+                    '🚃 riding the train',
+                    '🚆 train time'
+                ];
+            } else if (activity.activity.includes('Walking')) {
+                statusOptions = [
+                    '🚶‍♀️ walking',
+                    '🚶‍♀️ on my way',
+                    '🚶‍♀️ heading somewhere',
+                    '🚶‍♀️ walking rn'
+                ];
+            } else {
+                statusOptions = [
+                    '🚃 commuting',
+                    '🚶‍♀️ traveling',
+                    '🚃 on the go'
+                ];
+            }
             statusState = 'idle';
             break;
             
         case 'university':
-            statusText = `🏫 at uni right nowww`;
-            activityTypeDiscord = ActivityType.Custom;
+            statusOptions = [
+                '🏫 at uni right now',
+                '🎓 on campus',
+                '🏫 at university',
+                '🎓 at campus rn',
+                '🏫 @ saitama uni'
+            ];
             statusState = 'online';
             break;
             
         case 'church':
-            statusText = `be right back!`;
-            activityTypeDiscord = ActivityType.Custom;
+            statusOptions = [
+                '⛪ at church',
+                '⛪ church service',
+                'be right back!',
+                '⛪ sunday service'
+            ];
             statusState = 'dnd';
             break;
             
         case 'personal':
             if (activity.activity.includes('eating') || activity.activity.includes('dinner') || activity.activity.includes('lunch') || activity.activity.includes('breakfast')) {
-                statusText = `🍽️ ${activity.activity}`;
+                statusOptions = [
+                    '🍽️ eating~',
+                    '🍱 having a meal',
+                    '🍽️ eating rn',
+                    '🍚 meal time!',
+                    '🍽️ nom nom',
+                    '🍱 eating ^^'
+                ];
                 statusState = 'idle';
             } else if (activity.activity.includes('shower') || activity.activity.includes('Getting dressed')) {
-                statusText = `getting ready!!`;
+                statusOptions = [
+                    '🚿 getting ready',
+                    '✨ freshening up',
+                    '🚿 shower time',
+                    '✨ getting ready!',
+                    '🚿 brb showering'
+                ];
                 statusState = 'idle';
             } else if (activity.activity.includes('bed') || activity.activity.includes('Getting ready for bed')) {
-                statusText = `going to bed soon :D`;
+                statusOptions = [
+                    '🌙 getting ready for bed',
+                    '😴 bedtime soon',
+                    '🌙 winding down',
+                    '😴 going to sleep soon',
+                    '🌙 almost bedtime'
+                ];
                 statusState = 'idle';
+            } else if (activity.activity.includes('Cleaning dishes')) {
+                statusOptions = [
+                    '🧼 cleaning up',
+                    '🧼 doing dishes',
+                    '🧼 washing dishes',
+                    '✨ cleaning'
+                ];
+                statusState = 'online';
+            } else if (activity.activity.includes('Preparing')) {
+                statusOptions = [
+                    '🍳 cooking!',
+                    '🍳 making food',
+                    '🍳 preparing a meal',
+                    '👩‍🍳 cooking time'
+                ];
+                statusState = 'online';
             } else {
-                statusText = `${activity.emoji} ${activity.activity}`;
+                statusOptions = [
+                    `${activity.emoji} ${activity.activity}`,
+                    '✨ doing stuff',
+                    '💫 busy rn'
+                ];
                 statusState = 'online';
             }
-            activityTypeDiscord = ActivityType.Custom;
             break;
             
         case 'break':
-            statusText = `just chilling!`;
-            activityTypeDiscord = ActivityType.Custom;
+            statusOptions = [
+                '☕ taking a break',
+                '😌 just chilling',
+                '☕ break time!',
+                '😌 resting',
+                '☕ on break',
+                '✨ relaxing'
+            ];
             statusState = 'idle';
             break;
             
         case 'free':
         default:
-            statusText = `i'm free!`;
-            activityTypeDiscord = ActivityType.Custom;
+            statusOptions = [
+                "i'm free!",
+                '✨ available',
+                '💫 free rn',
+                '😊 just hanging out',
+                '✨ nothing much',
+                '💫 free time~',
+                '😌 chilling',
+                '✨ around!'
+            ];
             statusState = 'online';
             break;
+    }
+    
+    // Filter out recently used statuses to ensure variety
+    const availableOptions = statusOptions.filter(option => 
+        !statusHistory.includes(option)
+    );
+    
+    // If all options were recently used, clear history and use full list
+    const finalOptions = availableOptions.length > 0 ? availableOptions : statusOptions;
+    
+    // Pick a random status from available options
+    const statusText = finalOptions[Math.floor(Math.random() * finalOptions.length)];
+    
+    // Update status history
+    statusHistory.push(statusText);
+    if (statusHistory.length > MAX_STATUS_HISTORY) {
+        statusHistory.shift(); // Remove oldest
     }
     
     // Update Discord presence
@@ -1089,6 +1464,11 @@ It's ${misukiTimeOfDay} for you in Japan right now.
     const activityContext = currentActivity ? 
         `\n=== YOUR CURRENT ACTIVITY ===\nRight now you are: ${currentActivity.activity} ${currentActivity.emoji}\nActivity type: ${currentActivity.type}\n` : '';
 
+    // Status awareness - Misuki knows what her Discord status says
+    const currentStatus = getCurrentStatus();
+    const statusContext = currentStatus ? 
+        `\n=== 🔔 YOUR DISCORD STATUS ===\nYour current Discord status is: "${currentStatus}"\n(You set this status based on what you're doing! You can mention it naturally if relevant)\n` : '';
+
     // Channel context (DM vs Server)
     const channelTypeContext = isDM ? 
         `You're talking in a PRIVATE DM (Direct Message) with ${userName} - just the two of you! ❤️` :
@@ -1222,6 +1602,7 @@ ${behaviorGuidance}
 
 ${timeContextString}
 ${activityContext}
+${statusContext}
 ${relationshipContext}
 ${otherUsersContext}
 ${danActivityContext}
@@ -1607,11 +1988,14 @@ client.once('ready', () => {
     console.log(`💝 Nickname system: ENABLED`);
     console.log(`🎨 Dynamic GIF search: ENABLED`);
     console.log(`🌐 Web search: ENABLED`);
-    console.log(`🎯 Discord status: DYNAMIC`);
+    console.log(`🎯 Discord status: DYNAMIC (updates every 2 min)`);
+    console.log(`💌 Proactive messaging: ENABLED (initiates conversations with Dan)`);
     console.log(`🔄 MySQL connection: POOLED (prevents timeout errors)`);
     
     updateDiscordStatus();
-    setInterval(updateDiscordStatus, 5 * 60 * 1000);
+    // Update status every 2 minutes for micro-status updates!
+    // Also checks for proactive messaging opportunities
+    setInterval(updateDiscordStatus, 2 * 60 * 1000);
     
     connectDB().catch(console.error);
 });
