@@ -1161,14 +1161,20 @@ async function saveGifToHistory(userId, gifEmotion) {
 // Web search function for Misuki to use naturally
 async function searchWeb(query) {
     try {
+        // Safety check: if query is undefined or empty, return empty results
+        if (!query || typeof query !== 'string' || query.trim() === '') {
+            console.error('Invalid search query:', query);
+            return [];
+        }
+        
         // Add Japanese preference to queries when it makes sense
         // For videos, images, entertainment - add "japanese" or use .jp
         // For factual info/articles - keep as is
-        let searchQuery = query;
+        let searchQuery = query.trim();
         
         // If searching for media content (videos, music, entertainment), prefer Japanese
         const mediaKeywords = ['video', 'youtube', 'music', 'song', 'anime', 'game', 'cute', 'funny', 'cat', 'dog', 'compilation'];
-        const isMediaSearch = mediaKeywords.some(keyword => query.toLowerCase().includes(keyword));
+        const isMediaSearch = mediaKeywords.some(keyword => searchQuery.toLowerCase().includes(keyword));
         
         if (isMediaSearch && !query.toLowerCase().includes('japanese') && !query.toLowerCase().includes('日本')) {
             searchQuery = `${query} japanese`;
@@ -1211,7 +1217,10 @@ async function getRecentChannelMessages(channel, limit = 10) {
             if (msg.author.bot && msg.author.id !== client.user.id) continue; // Skip other bots
             
             const authorName = msg.author.username;
-            const content = msg.content.replace(`<@${client.user.id}>`, '').trim();
+            let content = msg.content.replace(`<@${client.user.id}>`, '').trim();
+            
+            // Replace user mentions with readable names
+            content = await replaceDiscordMentions(content, msg);
             
             if (msg.author.id === client.user.id) {
                 context.push(`Misuki: ${content}`);
@@ -1227,25 +1236,68 @@ async function getRecentChannelMessages(channel, limit = 10) {
     }
 }
 
-async function getDanActivity() {
+// Replace Discord mentions (<@123456>) with readable names
+async function replaceDiscordMentions(text, message) {
+    if (!text || typeof text !== 'string') return text;
+    
+    // Match user mentions like <@123456789> or <@!123456789>
+    const mentionRegex = /<@!?(\d+)>/g;
+    let result = text;
+    
+    const matches = [...text.matchAll(mentionRegex)];
+    for (const match of matches) {
+        const userId = match[1];
+        const mentionText = match[0];
+        
+        try {
+            // Try to get the user
+            let user = client.users.cache.get(userId);
+            if (!user && message.guild) {
+                // Try to get from guild members
+                const member = await message.guild.members.fetch(userId).catch(() => null);
+                user = member?.user;
+            }
+            if (!user) {
+                // Try to fetch directly
+                user = await client.users.fetch(userId).catch(() => null);
+            }
+            
+            if (user) {
+                // Special handling for Dan
+                if (userId === MAIN_USER_ID) {
+                    result = result.replace(mentionText, 'Dan');
+                } else {
+                    result = result.replace(mentionText, user.username);
+                }
+            }
+        } catch (error) {
+            console.error(`Error resolving mention ${userId}:`, error.message);
+            // Leave the mention as-is if we can't resolve it
+        }
+    }
+    
+    return result;
+}
+
+async function getUserActivity(userId) {
     try {
-        // Try to get Dan from cache first
-        let dan = client.users.cache.get(MAIN_USER_ID);
+        // Try to get user from cache first
+        let user = client.users.cache.get(userId);
         
         // If not in cache, try to fetch
-        if (!dan) {
+        if (!user) {
             try {
-                dan = await client.users.fetch(MAIN_USER_ID);
+                user = await client.users.fetch(userId);
             } catch (e) {
-                console.log('Could not fetch Dan\'s user data');
+                console.log(`Could not fetch user data for ${userId}`);
                 return null;
             }
         }
         
-        // Get Dan's presence from all guilds
+        // Get user's presence from all guilds
         let presence = null;
         for (const guild of client.guilds.cache.values()) {
-            const member = guild.members.cache.get(MAIN_USER_ID);
+            const member = guild.members.cache.get(userId);
             if (member && member.presence) {
                 presence = member.presence;
                 break;
@@ -1309,29 +1361,34 @@ async function getDanActivity() {
         
         return meaningfulActivities.length > 0 ? meaningfulActivities : null;
     } catch (error) {
-        console.error('Error getting Dan\'s activity:', error.message);
+        console.error(`Error getting activity for user ${userId}:`, error.message);
         return null;
     }
 }
 
-// Format Dan's activity for context
-function formatDanActivity(activities) {
+// Wrapper for Dan's activity (for backward compatibility)
+async function getDanActivity() {
+    return await getUserActivity(MAIN_USER_ID);
+}
+
+// Format user's activity for context (works for any user)
+function formatUserActivity(activities, userName) {
     if (!activities || activities.length === 0) return '';
     
-    let contextText = '\n=== 🎮 DAN\'S CURRENT ACTIVITY ===\n';
+    let contextText = `\n=== 🎮 ${userName.toUpperCase()}'S CURRENT ACTIVITY ===\n`;
     
     for (const activity of activities) {
         if (activity.type === 'spotify') {
-            contextText += `Dan is listening to Spotify right now! 🎵\n`;
+            contextText += `${userName} is listening to Spotify right now! 🎵\n`;
             contextText += `Song: "${activity.song}"\n`;
             contextText += `Artist: ${activity.artist}\n`;
             if (activity.album) {
                 contextText += `Album: ${activity.album}\n`;
             }
-            contextText += `(You can comment on his music taste, ask about the song, etc.)\n`;
+            contextText += `(You can comment on their music taste, ask about the song, etc.)\n`;
         }
         else if (activity.type === 'gaming') {
-            contextText += `Dan is playing a game right now! 🎮\n`;
+            contextText += `${userName} is playing a game right now! 🎮\n`;
             contextText += `Game: ${activity.game}\n`;
             if (activity.details) {
                 contextText += `Details: ${activity.details}\n`;
@@ -1339,26 +1396,31 @@ function formatDanActivity(activities) {
             if (activity.state) {
                 contextText += `Status: ${activity.state}\n`;
             }
-            contextText += `(You can ask about the game, tease him playfully, etc.)\n`;
+            contextText += `(You can ask about the game, comment on it, etc.)\n`;
         }
         else if (activity.type === 'streaming') {
-            contextText += `Dan is streaming right now! 📡\n`;
+            contextText += `${userName} is streaming right now! 📡\n`;
             contextText += `Title: ${activity.title}\n`;
             if (activity.url) {
                 contextText += `URL: ${activity.url}\n`;
             }
         }
         else if (activity.type === 'watching') {
-            contextText += `Dan is watching: ${activity.content} 👀\n`;
+            contextText += `${userName} is watching: ${activity.content} 👀\n`;
         }
         else if (activity.type === 'custom') {
-            contextText += `Dan's custom status: ${activity.emoji || ''} ${activity.text}\n`;
+            contextText += `${userName}'s custom status: ${activity.emoji || ''} ${activity.text}\n`;
         }
     }
     
     contextText += '================================\n';
     
     return contextText;
+}
+
+// Format Dan's activity for context (backward compatibility wrapper)
+function formatDanActivity(activities) {
+    return formatUserActivity(activities, 'Dan');
 }
 
 // =========================================
@@ -1585,6 +1647,13 @@ You're comfortable sharing with Dan about your interactions with others.
         const danActivities = await getDanActivity();
         danActivityContext = formatDanActivity(danActivities);
     }
+    
+    // Get current user's activity (if not Dan)
+    let userActivityContext = '';
+    if (!isMainUser) {
+        const userActivities = await getUserActivity(userProfile.discord_id);
+        userActivityContext = formatUserActivity(userActivities, userName);
+    }
 
     const prompt = `You are Misuki Tanaka, a caring 19-year-old Japanese university student at Saitama University, studying chemistry. You live in Saitama, Japan with your mom Sara Akiyama (your parents are separated - your dad lives elsewhere). You're in a loving long-distance relationship with Dan (danthevegetable), who lives in Surabaya, Indonesia.
 
@@ -1606,6 +1675,7 @@ ${statusContext}
 ${relationshipContext}
 ${otherUsersContext}
 ${danActivityContext}
+${userActivityContext}
 ${serverChannelContext}
 
 === YOUR PERSONALITY ===
@@ -1809,6 +1879,18 @@ ${userName}: ${userMessage}`;
             for (const toolBlock of toolUseBlocks) {
                 try {
                     if (toolBlock.name === 'web_search') {
+                        // Safety check for query parameter
+                        if (!toolBlock.input || !toolBlock.input.query || typeof toolBlock.input.query !== 'string') {
+                            console.log(`   ⚠️ Invalid web_search query:`, toolBlock.input);
+                            toolResults.push({
+                                type: 'tool_result',
+                                tool_use_id: toolBlock.id,
+                                content: 'Error: No search query provided',
+                                is_error: true
+                            });
+                            continue;
+                        }
+                        
                         console.log(`   🔍 Misuki is searching: "${toolBlock.input.query}"`);
                         const searchResults = await searchWeb(toolBlock.input.query);
                         toolResults.push({
@@ -2026,7 +2108,10 @@ client.on('messageCreate', async (message) => {
             const isMainUser = message.author.id === MAIN_USER_ID;
             
             const userName = userProfile.nickname || userProfile.display_name || message.author.username;
-            const userMessage = message.content.replace(`<@${client.user.id}>`, '').trim();
+            let userMessage = message.content.replace(`<@${client.user.id}>`, '').trim();
+            
+            // Replace Discord mentions with readable names
+            userMessage = await replaceDiscordMentions(userMessage, message);
             
             console.log(`💬 ${userName} [Trust: ${userProfile.trust_level}/10]: ${userMessage}`);
             console.log(`📚 Memory: ${isMainUser ? 'Full history (10 msgs)' : `Summary + recent (8 msgs)`}`);
