@@ -37,6 +37,9 @@ let db;
 // Your Discord ID (the main user - Dan)
 const MAIN_USER_ID = '406105172780122113';
 
+// Allowed channel ID - Misuki will only respond in this channel (or DMs)
+const ALLOWED_CHANNEL_ID = '1436370040524902520';
+
 // Status history tracking (for variety and awareness)
 const statusHistory = [];
 const MAX_STATUS_HISTORY = 5;
@@ -165,7 +168,7 @@ async function getConversationHistory(userId, limit = 10) {
 }
 
 // Save conversation to database
-async function saveConversation(userId, userMessage, misukiResponse, mood = 'gentle') {
+async function saveConversation(userId, userMessage, misukiResponse, mood = 'gentle', context = 'dm') {
     await db.execute(
         `INSERT INTO conversations (user_id, user_message, misuki_response, mood, timestamp) 
          VALUES (?, ?, ?, ?, NOW())`,
@@ -1207,29 +1210,78 @@ async function searchWeb(query) {
 }
 
 // Get recent channel messages for context (when in server)
-async function getRecentChannelMessages(channel, limit = 10) {
+async function getRecentChannelMessages(channel, limit = 20) {
     try {
         const messages = await channel.messages.fetch({ limit: limit });
         const messageArray = Array.from(messages.values()).reverse(); // oldest first
         
         const context = [];
+        const participantIds = new Set();
+        
         for (const msg of messageArray) {
             if (msg.author.bot && msg.author.id !== client.user.id) continue; // Skip other bots
             
             const authorName = msg.author.username;
+            participantIds.add(msg.author.id);
+            
             let content = msg.content.replace(`<@${client.user.id}>`, '').trim();
             
             // Replace user mentions with readable names
             content = await replaceDiscordMentions(content, msg);
             
+            // Check if this message is a reply to another message
+            let replyContext = '';
+            if (msg.reference && msg.reference.messageId) {
+                try {
+                    const repliedTo = await channel.messages.fetch(msg.reference.messageId);
+                    if (repliedTo) {
+                        const repliedAuthor = repliedTo.author.username;
+                        let repliedContent = repliedTo.content.replace(`<@${client.user.id}>`, '').trim();
+                        repliedContent = await replaceDiscordMentions(repliedContent, repliedTo);
+                        
+                        // Truncate if too long
+                        if (repliedContent.length > 50) {
+                            repliedContent = repliedContent.substring(0, 50) + '...';
+                        }
+                        
+                        replyContext = ` [replying to ${repliedAuthor}: "${repliedContent}"]`;
+                    }
+                } catch (error) {
+                    // Couldn't fetch the replied message, that's okay
+                }
+            }
+            
             if (msg.author.id === client.user.id) {
                 context.push(`Misuki: ${content}`);
             } else {
-                context.push(`${authorName}: ${content}`);
+                context.push(`${authorName}${replyContext}: ${content}`);
             }
         }
         
-        return context.join('\n');
+        // Build participant list
+        const participantNames = [];
+        for (const userId of participantIds) {
+            if (userId === client.user.id) continue; // Don't include Misuki herself
+            
+            try {
+                const user = await client.users.fetch(userId);
+                if (userId === MAIN_USER_ID) {
+                    participantNames.push('Dan (your boyfriend)');
+                } else {
+                    participantNames.push(user.username);
+                }
+            } catch (error) {
+                // Ignore
+            }
+        }
+        
+        let fullContext = '';
+        if (participantNames.length > 0) {
+            fullContext = `People actively in this conversation: ${participantNames.join(', ')}\n\n`;
+        }
+        fullContext += context.join('\n');
+        
+        return fullContext;
     } catch (error) {
         console.error('Error fetching channel messages:', error);
         return '';
@@ -1277,6 +1329,25 @@ async function replaceDiscordMentions(text, message) {
     }
     
     return result;
+}
+
+// Get server context - lightweight version without scanning all members
+async function getServerContext(guild) {
+    if (!guild) return '';
+    
+    try {
+        const serverName = guild.name;
+        const memberCount = guild.memberCount;
+        
+        let context = `\n=== 🏠 SERVER: ${serverName} (${memberCount} members) ===\n`;
+        context += `⚠️ PUBLIC channel - multiple people can see this conversation.\n`;
+        context += `================================\n`;
+        
+        return context;
+    } catch (error) {
+        console.error('Error getting server context:', error);
+        return '';
+    }
 }
 
 async function getUserActivity(userId) {
@@ -1427,26 +1498,33 @@ function formatDanActivity(activities) {
 // GENERATE MISUKI'S RESPONSE (WITH MULTI-USER SUPPORT)
 // =========================================
 
-async function generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM = true, otherUsers = [], otherConversations = [], channelContext = '', retryCount = 0) {
+async function generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM = true, otherUsers = [], otherConversations = [], channelContext = '', serverContext = '', retryCount = 0) {
     const userName = userProfile.nickname || userProfile.display_name || userProfile.username;
     const isMainUser = userProfile.discord_id === MAIN_USER_ID;
     const trustLevel = userProfile.trust_level;
     
     // Build conversation context with timestamps
     let context = '';
-    conversationHistory.forEach(conv => {
-        if (conv.user_message) {
-            context += `${userName}: ${conv.user_message}\n`;
-        }
-        if (conv.misuki_response) {
-            context += `Misuki: ${conv.misuki_response}\n`;
-        }
-        context += '\n';
-    });
     
-    // Add time awareness - calculate time since last message
-    let timeContext = '';
+    // In servers, conversationHistory will be empty - we use channelContext instead
     if (conversationHistory.length > 0) {
+        // DM mode: Build from individual conversation history
+        // Note: This now includes BOTH DM and Server messages for cross-context memory!
+        conversationHistory.forEach(conv => {
+            if (conv.user_message) {
+                context += `${userName}: ${conv.user_message}\n`;
+            }
+            if (conv.misuki_response) {
+                context += `Misuki: ${conv.misuki_response}\n`;
+            }
+            context += '\n';
+        });
+    }
+    // Note: In server mode, context is empty here and channelContext is used instead
+    
+    // Add time awareness - calculate time since last message (only for DM mode)
+    let timeContext = '';
+    if (conversationHistory.length > 0 && isDM) {
         const lastConv = conversationHistory[conversationHistory.length - 1];
         if (lastConv && lastConv.timestamp) {
             const now = new Date();
@@ -1549,12 +1627,23 @@ It's ${misukiTimeOfDay} for you in Japan right now.
     let serverChannelContext = '';
     if (!isDM && channelContext) {
         serverChannelContext = `
-=== 📜 RECENT CHANNEL MESSAGES ===
+=== 📜 RECENT CHANNEL CONVERSATION ===
 Here are the recent messages in this channel (for context):
 
 ${channelContext}
 
-⚠️ IMPORTANT: When ${userName} refers to "she", "he", "they", or other pronouns, look at the recent channel messages above to understand who they're talking about!
+⚠️ CRITICAL CONTEXT AWARENESS:
+- When someone's message shows [replying to X: "..."], they are DIRECTLY RESPONDING to that specific message
+- If ${userName} says something [replying to Friend: "..."], ${userName} is talking to Friend, NOT you
+- If you see "Dan (your boyfriend)" in the participant list, DAN IS ALREADY IN THIS CONVERSATION - he's not somewhere else!
+- Pay attention to WHO is replying to WHOM - this tells you the conversation flow
+- When someone mentions "Dan" or "she/he/they", look at the conversation above to see who they're referring to
+- Multiple people can be talking at once - track the reply chains to understand who's talking to whom
+
+Example:
+Friend: "hey you should talk to Dan"
+Dan [replying to Friend: "hey you should..."]: "she's talking to you, not me"
+↑ Dan is RESPONDING to Friend's message, explaining that Friend should talk to you, not him
 `;
     }
 
@@ -1669,6 +1758,9 @@ You're talking on DISCORD right now, NOT your usual chatting web app! This is VE
 Behavior for this context:
 ${behaviorGuidance}
 
+${!isDM ? `⚠️ PUBLIC SERVER: Don't mention private DM conversations here. What happens in DMs stays in DMs.` : ''}
+
+${serverContext}
 ${timeContextString}
 ${activityContext}
 ${statusContext}
@@ -1802,23 +1894,29 @@ NEVER use Discord emojis like 😊 😂 😅 🤣 💕 - only use text-based emo
 - Express emotions through your WORDS and EMOTICONS only
 
 === RECENT CONVERSATION HISTORY ===
-${context}
-${timeContext}
+${isDM ? context : ''}
+${!isDM && channelContext ? channelContext : ''}
+${isDM ? timeContext : ''}
+
+${!isDM ? '⚠️ SERVER MODE: Public channel. Multiple people talking.' : ''}
 
 Now respond to ${userName}'s message naturally as Misuki. Remember your relationship level with them and respond accordingly!
 
 ${userName}: ${userMessage}`;
 
     // Helper function to make API call with retry logic
-    async function makeAPICall(messages, includeTools = true) {
+    async function makeAPICall(messages, includeTools = true, inputTokenEstimate = 0) {
         const config = {
             model: 'claude-sonnet-4-20250514',
-            max_tokens: 250,
+            max_tokens: 1024, // Increased for complex responses with tools and context
             messages: messages,
             temperature: 1.0
         };
         
-        if (includeTools) {
+        // Disable GIF tool if context is too large (over 4000 tokens estimated)
+        // This prevents empty responses when token budget is tight
+        // Note: GIF is nice-to-have, but reliable responses are critical
+        if (includeTools && inputTokenEstimate < 4000) {
             config.tools = [
                 {
                     name: 'web_search',
@@ -1836,17 +1934,36 @@ ${userName}: ${userMessage}`;
                 },
                 {
                     name: 'send_gif',
-                    description: 'Send an anime GIF that matches your current emotion or mood ALONG WITH your text message. Use this when you want to express yourself visually - when excited, sleepy, happy, confused, etc. Be natural about it - send GIFs when it feels right, not every message. You must ALWAYS provide text in your response when using this tool - never send just a GIF alone.',
+                    description: 'Send an anime GIF that matches your emotion ALONG WITH text. CRITICAL: You MUST provide a text response when using this tool - NEVER send just a GIF alone. Always write at least a short message with the GIF.',
                     input_schema: {
                         type: 'object',
                         properties: {
                             emotion: {
                                 type: 'string',
-                                description: 'Your current emotion',
+                                description: 'Your current emotion for the GIF',
                                 enum: ['happy', 'excited', 'love', 'affectionate', 'sad', 'upset', 'sleepy', 'tired', 'confused', 'curious', 'working', 'studying', 'playful', 'teasing', 'shy', 'nervous', 'embarrassed', 'surprised', 'content', 'relaxed', 'cute', 'eating']
                             }
                         },
                         required: ['emotion']
+                    }
+                }
+            ];
+        } else if (includeTools) {
+            // High context - only include web_search, disable GIF to save tokens
+            console.log(`   ⚠️ High context (${inputTokenEstimate} tokens) - GIF tool disabled`);
+            config.tools = [
+                {
+                    name: 'web_search',
+                    description: 'Search the web for videos, articles, or information. Use this naturally when you want to share something relevant - like a cat video when someone is sad, a chemistry article, a funny video, etc. You can search YouTube by including "youtube" in your query.',
+                    input_schema: {
+                        type: 'object',
+                        properties: {
+                            query: {
+                                type: 'string',
+                                description: 'The search query. For YouTube videos, include "youtube" in the query (e.g., "youtube cute cat video")'
+                            }
+                        },
+                        required: ['query']
                     }
                 }
             ];
@@ -1865,7 +1982,12 @@ ${userName}: ${userMessage}`;
     try {
         // First API call with tools available
         console.log(`   🤖 Calling Claude API (attempt ${retryCount + 1})...`);
-        const response = await makeAPICall([{ role: 'user', content: prompt }], true);
+        
+        // Rough token estimate: ~3.5 chars per token
+        const promptTokenEstimate = Math.ceil(prompt.length / 3.5);
+        console.log(`   📊 Estimated input tokens: ${promptTokenEstimate}`);
+        
+        const response = await makeAPICall([{ role: 'user', content: prompt }], true, promptTokenEstimate);
         console.log(`   ✅ API call successful`);
         const content = response.data.content;
         
@@ -1899,6 +2021,18 @@ ${userName}: ${userMessage}`;
                             content: JSON.stringify(searchResults)
                         });
                     } else if (toolBlock.name === 'send_gif') {
+                        // Safety check for emotion parameter
+                        if (!toolBlock.input || !toolBlock.input.emotion || typeof toolBlock.input.emotion !== 'string') {
+                            console.log(`   ⚠️ Invalid send_gif emotion:`, toolBlock.input);
+                            toolResults.push({
+                                type: 'tool_result',
+                                tool_use_id: toolBlock.id,
+                                content: 'Error: No emotion provided for GIF',
+                                is_error: true
+                            });
+                            continue;
+                        }
+                        
                         console.log(`   🎨 Misuki wants to send a ${toolBlock.input.emotion} gif`);
                         const gifUrl = await searchGif(toolBlock.input.emotion);
                         toolResults.push({
@@ -1937,14 +2071,11 @@ ${userName}: ${userMessage}`;
                 console.log(`   ⚠️ API returned empty content array!`);
                 console.log(`   📄 Full API response:`, JSON.stringify(followUpResponse.data, null, 2));
                 
-                // Empty content is problematic - provide fallback
-                const gifToolUsed = toolUseBlocks.find(block => block.name === 'send_gif');
-                const gifUrl = gifToolUsed ? toolResults.find(r => r.tool_use_id === gifToolUsed.id)?.content : null;
-                
+                // Empty content - provide fallback WITHOUT GIF
                 return {
                     text: "^^", // Simple fallback text
-                    gifUrl: gifUrl && gifUrl !== 'No gif found' ? gifUrl : null,
-                    gifEmotion: gifToolUsed?.input.emotion || null
+                    gifUrl: null, // Don't send GIF if response is empty
+                    gifEmotion: null
                 };
             }
             
@@ -1966,8 +2097,8 @@ ${userName}: ${userMessage}`;
                     // Check if GIF was used - provide gentle fallback
                     const gifToolUsed = toolUseBlocks.find(block => block.name === 'send_gif');
                     if (gifToolUsed) {
-                        // Empty response but GIF was requested - provide minimal text
-                        console.log(`   💡 Empty response with GIF - adding fallback text`);
+                        // Empty response but GIF was requested - provide minimal text, but DON'T send GIF
+                        console.log(`   💡 Empty response with GIF request - adding fallback text without GIF`);
                         responseText = '...';
                     } else {
                         // No text and no more tools - something unusual happened
@@ -1983,14 +2114,22 @@ ${userName}: ${userMessage}`;
             responseText = responseText.replace(/^["']|["']$/g, '');
             responseText = responseText.replace(/\s+/g, ' ').trim();
             
-            // Check if she wants to send a GIF
+            // Check if she wants to send a GIF (only if we have valid text response)
             const gifToolBlock = toolUseBlocks.find(block => block.name === 'send_gif');
-            const gifUrl = gifToolBlock ? toolResults.find(r => r.tool_use_id === gifToolBlock.id)?.content : null;
+            let gifUrl = null;
+            let gifEmotion = null;
+            
+            // Only process GIF if we have a proper text response
+            if (responseText && responseText !== '...' && responseText !== 'Hmm... (⸝⸝ᵕᴗᵕ⸝⸝)' && gifToolBlock) {
+                const gifResult = toolResults.find(r => r.tool_use_id === gifToolBlock.id);
+                gifUrl = gifResult?.content && gifResult.content !== 'No gif found' ? gifResult.content : null;
+                gifEmotion = gifToolBlock.input?.emotion || null;
+            }
             
             return {
                 text: responseText,
-                gifUrl: gifUrl && gifUrl !== 'No gif found' ? gifUrl : null,
-                gifEmotion: gifToolBlock?.input.emotion || null
+                gifUrl: gifUrl,
+                gifEmotion: gifEmotion
             };
         } else {
             // No tool use - just return the text response
@@ -2088,7 +2227,15 @@ client.on('messageCreate', async (message) => {
     const isDM = !message.guild;
     const isMentioned = message.mentions.has(client.user);
     
-    if (!isDM && !isMentioned) return;
+    // Only respond in DMs OR in the allowed channel when mentioned
+    if (!isDM) {
+        // In a server - check if it's the allowed channel
+        if (message.channel.id !== ALLOWED_CHANNEL_ID) {
+            return; // Ignore messages in other channels
+        }
+        // In allowed channel - only respond when mentioned
+        if (!isMentioned) return;
+    }
     
     console.log(`\n📨 Message from ${message.author.username}`);
     console.log(`📍 Context: ${isDM ? 'Private DM' : 'Server Channel'}`);
@@ -2114,15 +2261,32 @@ client.on('messageCreate', async (message) => {
             userMessage = await replaceDiscordMentions(userMessage, message);
             
             console.log(`💬 ${userName} [Trust: ${userProfile.trust_level}/10]: ${userMessage}`);
-            console.log(`📚 Memory: ${isMainUser ? 'Full history (10 msgs)' : `Summary + recent (8 msgs)`}`);
             
             const currentActivity = getMisukiCurrentActivity();
             console.log(`📅 Current activity: ${currentActivity.activity} ${currentActivity.emoji}`);
             
-            // Load conversation history - different lengths based on who it is
-            // Dan gets full history (10 messages), others get recent context (8 messages)
-            const historyLimit = isMainUser ? 10 : 8;
-            const history = await getConversationHistory(userProfile.user_id, historyLimit);
+            // Load conversation history
+            // In DMs: Use individual conversation history (includes DM + Server messages now!)
+            // In servers: Use shared channel history for better multi-user context
+            let history;
+            let historySource;
+            
+            if (isDM) {
+                // DM: Use individual conversation history (now includes server messages too!)
+                const historyLimit = 8; // Reduced for token efficiency
+                history = await getConversationHistory(userProfile.user_id, historyLimit);
+                historySource = 'individual history (DMs + Servers)';
+            } else {
+                // Server: Get channel messages and convert to conversation history format
+                const channelMessages = await getRecentChannelMessages(message.channel, 8); // Reduced for token efficiency
+                
+                // Parse channel messages into conversation history format
+                // This is a simplified version - channel context is already formatted
+                history = []; // Empty because we'll use channelMessages directly
+                historySource = 'shared channel history';
+            }
+            
+            console.log(`📚 Memory: ${historySource}`);
             
             // For non-Dan users, check if we should update their summary
             // Update every 10 messages
@@ -2134,12 +2298,13 @@ client.on('messageCreate', async (message) => {
                 });
             }
             
-            // Get other users context (only for main user)
-            const otherUsers = isMainUser ? await getOtherUsers(message.author.id, 5) : [];
-            const otherConversations = isMainUser ? await getOtherUsersConversations(message.author.id, 3) : [];
+            // Get other users context (only for main user in DMs)
+            const otherUsers = (isMainUser && isDM) ? await getOtherUsers(message.author.id, 5) : [];
+            const otherConversations = (isMainUser && isDM) ? await getOtherUsersConversations(message.author.id, 3) : [];
             
-            // Get recent channel messages for context (if in server)
-            const recentChannelMessages = !isDM ? await getRecentChannelMessages(message.channel, 10) : '';
+            // For servers, get the channel messages context and server awareness
+            const recentChannelMessages = !isDM ? await getRecentChannelMessages(message.channel, 8) : '';
+            const serverContext = !isDM ? await getServerContext(message.guild) : '';
             
             // Generate response
             const responseData = await generateMisukiResponse(
@@ -2150,7 +2315,8 @@ client.on('messageCreate', async (message) => {
                 isDM, 
                 otherUsers,
                 otherConversations,
-                recentChannelMessages
+                recentChannelMessages,
+                serverContext
             );
             
             if (stopTyping) stopTyping();
@@ -2163,7 +2329,12 @@ client.on('messageCreate', async (message) => {
             const finalResponse = response && response.trim() ? response : "^^";
             
             // Save conversation - use user_id from profile
-            await saveConversation(userProfile.user_id, userMessage, finalResponse, 'gentle');
+            // IMPORTANT: Save ALL messages (DM + Server) for cross-context memory
+            // This allows Dan to ask about server conversations in private DMs
+            const contextType = isDM ? 'dm' : 'server';
+            await saveConversation(userProfile.user_id, userMessage, finalResponse, 'gentle', contextType);
+            
+            console.log(`   💾 Saved to database: ${isDM ? 'DM' : 'Server'} conversation with ${userName}`);
             
             const emotion = userMessage.toLowerCase().includes('sad') || 
                            userMessage.toLowerCase().includes('tired') || 
