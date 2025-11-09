@@ -1920,13 +1920,13 @@ ${userName}: ${userMessage}`;
             config.tools = [
                 {
                     name: 'web_search',
-                    description: 'Search the web for videos, articles, or information. Use this naturally when you want to share something relevant - like a cat video when someone is sad, a chemistry article, a funny video, etc. You can search YouTube by including "youtube" in your query.',
+                    description: 'Search the web when the user explicitly asks you to find something, or when you genuinely need current information you don\'t have. Don\'t search unless actually needed - most conversations don\'t require web searches.',
                     input_schema: {
                         type: 'object',
                         properties: {
                             query: {
                                 type: 'string',
-                                description: 'The search query. For YouTube videos, include "youtube" in the query (e.g., "youtube cute cat video")'
+                                description: 'The search query'
                             }
                         },
                         required: ['query']
@@ -1954,13 +1954,13 @@ ${userName}: ${userMessage}`;
             config.tools = [
                 {
                     name: 'web_search',
-                    description: 'Search the web for videos, articles, or information. Use this naturally when you want to share something relevant - like a cat video when someone is sad, a chemistry article, a funny video, etc. You can search YouTube by including "youtube" in your query.',
+                    description: 'Search the web when the user explicitly asks you to find something, or when you genuinely need current information you don\'t have. Don\'t search unless actually needed.',
                     input_schema: {
                         type: 'object',
                         properties: {
                             query: {
                                 type: 'string',
-                                description: 'The search query. For YouTube videos, include "youtube" in the query (e.g., "youtube cute cat video")'
+                                description: 'The search query'
                             }
                         },
                         required: ['query']
@@ -2090,9 +2090,46 @@ ${userName}: ${userMessage}`;
                 // No text block found - check if Claude is trying to use more tools
                 const additionalToolUse = followUpResponse.data.content.filter(block => block.type === 'tool_use');
                 if (additionalToolUse.length > 0) {
-                    console.log(`   🔧 Claude wants to use ${additionalToolUse.length} more tool(s)...`);
-                    // For now, provide a gentle fallback
-                    responseText = "Hmm, let me think about that... ^^";
+                    console.log(`   🔧 Claude wants to use ${additionalToolUse.length} more tool(s), processing...`);
+                    
+                    // Process additional tools (allow ONE more round)
+                    const additionalToolResults = [];
+                    
+                    for (const toolBlock of additionalToolUse) {
+                        try {
+                            if (toolBlock.name === 'web_search') {
+                                if (!toolBlock.input?.query) {
+                                    additionalToolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: 'Error', is_error: true });
+                                    continue;
+                                }
+                                console.log(`   🔍 Additional search: "${toolBlock.input.query}"`);
+                                const results = await searchWeb(toolBlock.input.query);
+                                additionalToolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: JSON.stringify(results) });
+                            } else if (toolBlock.name === 'send_gif') {
+                                if (!toolBlock.input?.emotion) {
+                                    additionalToolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: 'Error', is_error: true });
+                                    continue;
+                                }
+                                const gifUrl = await searchGif(toolBlock.input.emotion);
+                                additionalToolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: gifUrl || 'No gif found' });
+                            }
+                        } catch (err) {
+                            additionalToolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: 'Error', is_error: true });
+                        }
+                    }
+                    
+                    // Final call - NO MORE TOOLS
+                    console.log(`   🤖 Final call with additional results...`);
+                    const finalResponse = await makeAPICall([
+                        { role: 'user', content: prompt },
+                        { role: 'assistant', content: content },
+                        { role: 'user', content: toolResults },
+                        { role: 'assistant', content: followUpResponse.data.content },
+                        { role: 'user', content: additionalToolResults }
+                    ], false);
+                    
+                    const finalText = finalResponse.data.content.find(b => b.type === 'text');
+                    responseText = finalText?.text?.trim() || "Here's what I found! ^^";
                 } else {
                     // Check if GIF was used - provide gentle fallback
                     const gifToolUsed = toolUseBlocks.find(block => block.name === 'send_gif');
@@ -2176,7 +2213,7 @@ ${userName}: ${userMessage}`;
             console.log(`   Error details: ${errorMessage}`);
             
             await new Promise(resolve => setTimeout(resolve, delay));
-            return generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM, otherUsers, otherConversations, channelContext, retryCount + 1);
+            return generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM, otherUsers, otherConversations, channelContext, serverContext, retryCount + 1);
         }
         
         // Log detailed error info for debugging
