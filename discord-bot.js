@@ -47,6 +47,291 @@ const MAX_STATUS_HISTORY = 5;
 // Conversation queue system - handles multiple people messaging at once
 const conversationQueue = new Map(); // channelId -> { currentUser, queue: [], isSending: false }
 
+// Emoji reaction system - Misuki's custom emojis from the server
+const EMOJI_SERVER_ID = '1436369815798419519';
+
+const customEmojis = {
+    // Love & Affection
+    cat_love: '<:cat_love:1437073036351246446>',
+    kanna_heart: '<:kanna_heart:1359900407987441974>',
+    
+    // Happy & Excited
+    wow: '<:wow:1210272709087600681>',
+    komi: '<a:komi:1123311536354623529>',
+    anime_clap: '<a:anime_clap_excited:1420281017750650891>',
+    
+    // Playful & Teasing
+    lapsmirk: '<:Lapsmirk:585596165454692375>',
+    dog_laugh: '<:dog_laugh:1344686486095925278>',
+    lol: '<:lol2:1210272715412348959>',
+    psycat_roll: '<a:psycat_roll:1365379635268948099>',
+    
+    // Shy & Flustered
+    cute_shy: '<a:cute_shy:1344687016251756686>',
+    cat_stare: '<:cat_stare:1167394082620964954>',
+    
+    // Sad & Concerned
+    sadly: '<:sadly3:1210272721175453747>',
+    cute_plead: '<:cute_plead:1420419726596771911>',
+    
+    // Thinking & Curious
+    pikathink: '<:kb_pikathink:1005605115035648081>',
+    
+    // Greetings
+    hi: '<:hi:1210272711906164746>',
+    
+    // Sleepy
+    sleepingg: '<:raidensleep:1126180427212783737>',
+    
+    // Surprised/Shocked
+    cat_scream: '<:cat_scream:1359901563849806072>',
+    
+    // Agreement/Disagreement
+    thats_true: '<:thats_true:1437073009256173699>',
+    thats_false: '<:thats_false:1437073006626209834>'
+};
+
+// Get human-readable emoji names from emoji objects
+function getReactionNames(emojiObjects, userProfile, messageContent) {
+    const emojiMap = {
+        'cat_love': 'a cat love emoji',
+        'kanna_heart': 'a Kanna heart emoji',
+        'hi': 'a hi/wave emoji',
+        'anime_clap_excited': 'an excited clapping emoji',
+        'lol2': 'a laughing emoji',
+        'cute_shy': 'a cute shy emoji',
+        'cute_plead': 'a cute pleading/concerned emoji',
+        'raidensleep': 'a sleepy emoji',
+        'kb_pikathink': 'a Pikachu thinking emoji',
+        'thats_true': 'a "that\'s true" emoji',
+        'ramen': 'a ramen bowl emoji',
+        'hug': 'a hugging emoji',
+        'cat_scream': 'a cat screaming emoji',
+        'wow': 'a "wow" emoji',
+        'Lapsmirk': 'a smirking emoji'
+    };
+    
+    const names = emojiObjects.map(emoji => emojiMap[emoji.name] || 'an emoji').join(' and ');
+    return names;
+}
+
+// Explain why she reacted (her emotional reasoning)
+function getReactionReason(messageContent, userProfile) {
+    const content = messageContent.toLowerCase();
+    const isMainUser = userProfile.user_id === MAIN_USER_ID;
+    const trustLevel = userProfile.trust_level;
+    
+    // Love messages
+    if (content.match(/\b(love you|love u|ily|i love)\b/i)) {
+        if (isMainUser) {
+            return "you felt overwhelmed with love and couldn't help expressing it";
+        } else if (trustLevel >= 7) {
+            return "you felt flustered and shy - that's really sweet of them to say";
+        } else if (trustLevel >= 4) {
+            return "you felt confused and awkward - you don't know them that well";
+        } else {
+            return "you felt very confused and uncomfortable - you barely know them";
+        }
+    }
+    
+    // Compliments
+    if (content.match(/\b(cute|adorable|sweet|pretty|beautiful)\b/i)) {
+        if (isMainUser) {
+            return "you felt shy and flustered from the compliment";
+        } else if (trustLevel >= 6) {
+            return "you felt appreciative but a bit shy";
+        } else {
+            return "you felt awkward - you don't know them well enough for that";
+        }
+    }
+    
+    // Greetings
+    if (content.match(/^(hi|hey|hello|good morning|good night)\b/i)) {
+        if (isMainUser) {
+            return "you felt excited and happy to see them";
+        } else {
+            return "you felt friendly and happy to greet them";
+        }
+    }
+    
+    // Good news
+    if (content.match(/\b(won|passed|succeeded|yay|amazing)\b/i)) {
+        return "you felt genuinely happy and excited for them";
+    }
+    
+    // Funny
+    if (content.match(/\b(haha|lol|lmao|funny)\b/i)) {
+        return "you found it amusing and wanted to laugh along";
+    }
+    
+    // Sad
+    if (content.match(/\b(tired|sad|depressed|rough day)\b/i)) {
+        if (isMainUser || trustLevel >= 6) {
+            return "you felt concerned and wanted to show you care";
+        } else {
+            return "you felt sympathetic";
+        }
+    }
+    
+    // Sleep
+    if (content.match(/\b(sleep|goodnight|gn)\b/i)) {
+        return "you felt caring and wanted to wish them well";
+    }
+    
+    // Food
+    if (content.match(/\b(ramen|food)\b/i)) {
+        return "you got excited about food";
+    }
+    
+    // Default
+    return "you had an emotional response to their message";
+}
+
+// Emoji reaction logic - EMOTION-BASED reactions (how she genuinely feels)
+// Returns emoji identifiers in the format Discord.js expects
+function getReactionEmojis(messageContent, userProfile, currentActivity) {
+    const content = messageContent.toLowerCase();
+    const reactions = [];
+    const trustLevel = userProfile.trust_level;
+    const isMainUser = userProfile.user_id === MAIN_USER_ID;
+    
+    // 40% chance to react at all (makes reactions more special!)
+    // Exception: Always react to "I love you" - her emotions are strong here!
+    const isLoveMessage = content.match(/\b(love you|love u|ily|i love)\b/i);
+    const shouldReact = isLoveMessage || Math.random() < 0.4;
+    
+    if (!shouldReact) {
+        return []; // No reaction this time!
+    }
+    
+    // For tracking what emojis were used (for explanation)
+    // Format: { id: 'emoji_id', name: 'emoji_name' }
+    
+    // === LOVE EXPRESSIONS - Emotion depends on WHO said it ===
+    if (content.match(/\b(love you|love u|ily|i love|❤️|💕|♥)/i)) {
+        if (isMainUser) {
+            // Dan saying "I love you" - She's deeply in love, overwhelmed with emotion!
+            reactions.push({ id: '1437073036351246446', name: 'cat_love' });
+            reactions.push({ id: '1359900407987441974', name: 'kanna_heart' });
+            return reactions;
+        } else if (trustLevel >= 7) {
+            // Close friend - Flustered! Sweet but awkward
+            reactions.push({ id: '1344687016251756686', name: 'cute_shy' });
+            return reactions;
+        } else if (trustLevel >= 4) {
+            // Acquaintance - Confused and awkward
+            reactions.push({ id: '1005605115035648081', name: 'kb_pikathink' });
+            return reactions;
+        } else {
+            // Stranger - Very confused/uncomfortable
+            reactions.push({ id: '1359901563849806072', name: 'cat_scream' });
+            return reactions;
+        }
+    }
+    
+    // === COMPLIMENTS TO HER - Emotion depends on relationship ===
+    if (content.match(/\b(you'?re (so )?(cute|adorable|sweet|pretty|beautiful)|good (girl|bot)|best (girl|bot))\b/i)) {
+        if (isMainUser) {
+            reactions.push({ id: '1344687016251756686', name: 'cute_shy' });
+        } else if (trustLevel >= 6) {
+            reactions.push({ id: '1344687016251756686', name: 'cute_shy' });
+        } else {
+            reactions.push({ id: '1005605115035648081', name: 'kb_pikathink' });
+        }
+        return reactions;
+    }
+    
+    // === GREETINGS - Emotion: Happy to see them! ===
+    if (content.match(/^(hi|hey|hello|good morning|good night|gm|gn)\b/i)) {
+        if (isMainUser) {
+            reactions.push({ id: '1210272711906164746', name: 'hi' });
+            if (Math.random() < 0.3) reactions.push({ id: '1437073036351246446', name: 'cat_love' });
+        } else if (trustLevel >= 5) {
+            reactions.push({ id: '1210272711906164746', name: 'hi' });
+        }
+        return reactions;
+    }
+    
+    // === EXCITEMENT/GOOD NEWS - Emotion: Genuinely happy for them! ===
+    if (content.match(/\b(won|passed|got an? a|succeeded|yes!|yay|amazing|awesome|great news)\b/i)) {
+        reactions.push({ id: '1420281017750650891', name: 'anime_clap_excited' });
+        if (isMainUser) {
+            reactions.push({ id: '1437073036351246446', name: 'cat_love' });
+        }
+        return reactions;
+    }
+    
+    // === FUNNY/LAUGHING - Emotion: Amused and laughing along! ===
+    if (content.match(/\b(haha|lol|lmao|rofl|funny|hilarious|😂|🤣)\b/i)) {
+        reactions.push({ id: '1210272715412348959', name: 'lol2' });
+        return reactions;
+    }
+    
+    // === SAD/TIRED - Emotion: Empathy and concern ===
+    if (content.match(/\b(tired|exhausted|sad|depressed|rough day|bad day|crying|😢|😭)\b/i)) {
+        if (isMainUser || trustLevel >= 6) {
+            reactions.push({ id: '1420419726596771911', name: 'cute_plead' });
+            if (isMainUser) reactions.push({ id: '🫂', name: 'hug' }); // built-in
+        } else if (trustLevel >= 4) {
+            reactions.push({ id: '1420419726596771911', name: 'cute_plead' });
+        }
+        return reactions;
+    }
+    
+    // === SLEEP/GOODNIGHT - Emotion: Sleepy empathy or caring ===
+    if (content.match(/\b(sleep|sleeping|sleepy|goodnight|gn|bed|tired)\b/i)) {
+        if (currentActivity.type === 'sleep' || currentActivity.activity.includes('sleep')) {
+            reactions.push({ id: '1126180427212783737', name: 'raidensleep' });
+        } else if (isMainUser) {
+            reactions.push({ id: '1126180427212783737', name: 'raidensleep' });
+            reactions.push({ id: '1437073036351246446', name: 'cat_love' });
+        } else if (trustLevel >= 6) {
+            reactions.push({ id: '1126180427212783737', name: 'raidensleep' });
+        }
+        return reactions;
+    }
+    
+    // === QUESTIONS - Emotion: Curious and thinking ===
+    if (content.includes('?') && !reactions.length) {
+        reactions.push({ id: '1005605115035648081', name: 'kb_pikathink' });
+        return reactions;
+    }
+    
+    // === AGREEMENT - Emotion: Agrees enthusiastically! ===
+    if (content.match(/\b(right|correct|true|exactly|agree|yeah|yep|facts)\b/i)) {
+        reactions.push({ id: '1437073009256173699', name: 'thats_true' });
+        return reactions;
+    }
+    
+    // === FOOD MENTIONS - Emotion: Excited about food! ===
+    if (content.match(/\b(ramen|food|eat|eating|hungry|lunch|dinner|breakfast|delicious)\b/i)) {
+        reactions.push({ id: '🍜', name: 'ramen' }); // built-in
+        if (content.includes('ramen')) {
+            reactions.push({ id: '1210272709087600681', name: 'wow' });
+        }
+        return reactions;
+    }
+    
+    // === SURPRISE/SHOCK - Emotion: Genuinely surprised! ===
+    if (content.match(/\b(what|omg|wtf|no way|seriously|really\?!|wow)\b/i)) {
+        if (content.match(/\b(wtf|what the)\b/i)) {
+            reactions.push({ id: '1359901563849806072', name: 'cat_scream' });
+        } else {
+            reactions.push({ id: '1210272709087600681', name: 'wow' });
+        }
+        return reactions;
+    }
+    
+    // === PLAYFUL/TEASING - Emotion: Playful mood! ===
+    if (content.match(/\b(hehe|tease|teasing|silly|goofy)\b/i)) {
+        reactions.push({ id: '585596165454692375', name: 'Lapsmirk' });
+        return reactions;
+    }
+    
+    // Limit to 2 reactions max
+    return reactions.slice(0, 2);
+}
+
 // Natural variations for queue messages
 const queueVariations = {
     wait: [
@@ -1531,7 +1816,7 @@ function formatDanActivity(activities) {
 // GENERATE MISUKI'S RESPONSE (WITH MULTI-USER SUPPORT)
 // =========================================
 
-async function generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM = true, otherUsers = [], otherConversations = [], channelContext = '', serverContext = '', retryCount = 0) {
+async function generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM = true, otherUsers = [], otherConversations = [], channelContext = '', serverContext = '', reactionExplanation = '', retryCount = 0) {
     const userName = userProfile.nickname || userProfile.display_name || userProfile.username;
     const isMainUser = userProfile.discord_id === MAIN_USER_ID;
     const trustLevel = userProfile.trust_level;
@@ -1932,6 +2217,7 @@ ${!isDM && channelContext ? channelContext : ''}
 ${isDM ? timeContext : ''}
 
 ${!isDM ? '⚠️ SERVER MODE: Public channel. Multiple people talking.' : ''}
+${reactionExplanation}
 
 Now respond to ${userName}'s message naturally as Misuki. Remember your relationship level with them and respond accordingly!
 
@@ -2246,7 +2532,7 @@ ${userName}: ${userMessage}`;
             console.log(`   Error details: ${errorMessage}`);
             
             await new Promise(resolve => setTimeout(resolve, delay));
-            return generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM, otherUsers, otherConversations, channelContext, serverContext, retryCount + 1);
+            return generateMisukiResponse(userMessage, conversationHistory, userProfile, currentActivity, isDM, otherUsers, otherConversations, channelContext, serverContext, reactionExplanation, retryCount + 1);
         }
         
         // Log detailed error info for debugging
@@ -2361,13 +2647,52 @@ client.on('messageCreate', async (message) => {
         let stopTyping = null;
         
         try {
-            stopTyping = await startTyping(message.channel);
-            
             // Get or create user profile
             const userProfile = await getUserProfile(message.author.id, message.author.username);
             const isMainUser = message.author.id === MAIN_USER_ID;
             
+            // EMOJI REACTIONS - React to message based on content (before typing/responding)
+            // Store what reactions we used so we can tell Claude about them
+            let usedReactions = [];
+            let reactionExplanation = '';
+            
+            setTimeout(async () => {
+                try {
+                    const reactEmojis = getReactionEmojis(message.content, userProfile, getMisukiCurrentActivity());
+                    usedReactions = reactEmojis;
+                    
+                    for (const emoji of reactEmojis) {
+                        // Extract just the ID for Discord.js react()
+                        const emojiId = emoji.id;
+                        await message.react(emojiId).catch(err => {
+                            console.log(`   ⚠️ Couldn't react with ${emoji.name} (${emojiId}):`, err.message);
+                        });
+                        // Small delay between multiple reactions
+                        await new Promise(resolve => setTimeout(resolve, 300));
+                    }
+                    if (reactEmojis.length > 0) {
+                        console.log(`   💕 Reacted with ${reactEmojis.length} emoji(s)`);
+                    }
+                } catch (err) {
+                    // Reactions are optional, don't break if they fail
+                    console.log(`   ⚠️ Reaction error:`, err.message);
+                }
+            }, 500); // 500ms delay before reacting (feels natural)
+            
+            // Wait for reactions to be added (600ms total - 500ms delay + 100ms buffer)
+            await new Promise(resolve => setTimeout(resolve, 600));
+            
+            // Get user name for reaction explanation
             const userName = userProfile.nickname || userProfile.display_name || message.author.username;
+            
+            // Build reaction explanation for Claude
+            if (usedReactions.length > 0) {
+                const emojiNames = getReactionNames(usedReactions, userProfile, message.content);
+                reactionExplanation = `\n💭 IMPORTANT: You just reacted to ${userName}'s message with ${emojiNames} because ${getReactionReason(message.content, userProfile)}. This was an emotional response - you can reference this naturally if they mention it.\n`;
+            }
+            
+            stopTyping = await startTyping(message.channel);
+            
             let userMessage = message.content.replace(`<@${client.user.id}>`, '').trim();
             
             // Replace Discord mentions with readable names
@@ -2429,7 +2754,8 @@ client.on('messageCreate', async (message) => {
                 otherUsers,
                 otherConversations,
                 recentChannelMessages,
-                serverContext
+                serverContext,
+                reactionExplanation
             );
             
             if (stopTyping) stopTyping();
