@@ -47,6 +47,9 @@ const MAX_STATUS_HISTORY = 5;
 // Conversation queue system - handles multiple people messaging at once
 const conversationQueue = new Map(); // channelId -> { currentUser, queue: [], isSending: false }
 
+// Processing lock per user (prevents parallel responses to same user)
+const userProcessingLock = new Map(); // userId -> { isProcessing: boolean, latestMessageId: string }
+
 // Emoji reaction system - Misuki's custom emojis from the server
 const EMOJI_SERVER_ID = '1436369815798419519';
 
@@ -2591,8 +2594,32 @@ client.on('messageCreate', async (message) => {
         }
         // In allowed channel - only respond when mentioned
         if (!isMentioned) return;
-        
-        // QUEUE SYSTEM: Check if we're already responding to someone else
+    }
+    
+    // SELF-INTERRUPTION LOCK: Prevent parallel responses to same user
+    const userId = message.author.id;
+    let lockData = userProcessingLock.get(userId);
+    
+    if (!lockData) {
+        lockData = { isProcessing: false, latestMessageId: null };
+        userProcessingLock.set(userId, lockData);
+    }
+    
+    if (lockData.isProcessing) {
+        // Already processing a message from this user!
+        console.log(`🔄 ${message.author.username} sent new message while processing - updating`);
+        lockData.latestMessageId = message.id;
+        await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second pause
+        console.log(`   💭 Processing new message...`);
+    }
+    
+    // Set lock
+    lockData.isProcessing = true;
+    lockData.latestMessageId = message.id;
+    const currentMessageId = message.id;
+    
+    // SERVER QUEUE SYSTEM
+    if (!isDM) {
         const channelId = message.channel.id;
         let queueData = conversationQueue.get(channelId);
         
@@ -2780,7 +2807,7 @@ client.on('messageCreate', async (message) => {
                            userMessage.toLowerCase().includes('upset') ? 'negative' : 'positive';
             await updateEmotionalState(userProfile.user_id, emotion);
             
-            // Smart message splitting - but keep URLs intact!
+            // Smart message splitting - but keep URLs and kaomoji intact!
             let messages = [];
             
             // Always send text (we ensured finalResponse exists above)
@@ -2792,16 +2819,49 @@ client.on('messageCreate', async (message) => {
                 // If there's a URL, don't split the message - send it all at once
                 messages = [finalResponse];
             } else {
-                // No URL - use normal smart splitting
-                const sentences = finalResponse.match(/[^.!?]+[.!?]+/g) || [finalResponse];
+                // Common kaomoji patterns that shouldn't be broken
+                const kaomojiPatterns = [
+                    /\([\^˶ᵔᴗ_><꒰ᐢ\-ω≧ᵕ]+[\s\.][\s\.]?[\^˶ᵔᴗ_><꒰ᐢ\-ω≧ᵕ]+\)/g,  // (˶ᵔ ᵕ ᵔ˶), (˶ᵕ ᵕ˶)
+                    />\.[\s]?</g,  // >.<, > . <
+                    /꒰ᐢ\.[\s\.]?\.?\s?ᐢ꒱/g,  // ꒰ᐢ. . ᐢ꒱
+                    /\^\^/g,  // ^^
+                    />\/\/</g,  // >///<
+                    />\/\/\/</g,  // >////<
+                    /\(\s?[><\-\^ᵕω]\s?[><\-_ᵕω]\s?[><\-\^ᵕω]\s?\)/g  // Generic emoticons
+                ];
+                
+                // Protect kaomoji by temporarily replacing them
+                let protectedText = finalResponse;
+                const kaomojiMap = new Map();
+                let kaomojiIndex = 0;
+                
+                kaomojiPatterns.forEach(pattern => {
+                    protectedText = protectedText.replace(pattern, (match) => {
+                        const placeholder = `__KAOMOJI${kaomojiIndex}__`;
+                        kaomojiMap.set(placeholder, match);
+                        kaomojiIndex++;
+                        return placeholder;
+                    });
+                });
+                
+                // Now split on sentence endings (with kaomoji protected)
+                const sentences = protectedText.match(/[^.!?]+[.!?]+/g) || [protectedText];
                 
                 if (sentences.length <= 2) {
-                    messages = [finalResponse];
+                    // Restore kaomoji
+                    let restoredText = finalResponse;
+                    messages = [restoredText];
                 } else {
                     let currentMessage = '';
                     
                     for (let i = 0; i < sentences.length; i++) {
-                        const sentence = sentences[i].trim();
+                        let sentence = sentences[i].trim();
+                        
+                        // Restore kaomoji in this sentence
+                        kaomojiMap.forEach((original, placeholder) => {
+                            sentence = sentence.replace(placeholder, original);
+                        });
+                        
                         const sentenceCount = (currentMessage.match(/[.!?]+/g) || []).length;
                         
                         if (currentMessage && (currentMessage.length > 150 || sentenceCount >= 2)) {
@@ -2828,6 +2888,14 @@ client.on('messageCreate', async (message) => {
                         if (i === 0) {
                             await message.reply(messages[i]);
                         } else {
+                            // Check if user sent a newer message (self-interruption)
+                            const currentLock = userProcessingLock.get(message.author.id);
+                            if (currentLock && currentLock.latestMessageId !== currentMessageId) {
+                                // User sent a newer message! Abort this response
+                                console.log(`   🛑 Aborting - user sent a newer message`);
+                                break; // Exit the for loop, don't send remaining messages
+                            }
+                            
                             const typingTime = messages[i].length * 50 + Math.random() * 1000;
                             const pauseTime = 500 + Math.random() * 500;
                             const totalDelay = Math.min(typingTime + pauseTime, 5000);
@@ -2885,6 +2953,12 @@ client.on('messageCreate', async (message) => {
             }
             
             // Success! Break out of retry loop
+            
+            // Release user processing lock
+            const finalLock = userProcessingLock.get(message.author.id);
+            if (finalLock) {
+                finalLock.isProcessing = false;
+            }
             
             // QUEUE SYSTEM: Process next person in queue (if in server)
             if (!isDM && message.channel.id) {
