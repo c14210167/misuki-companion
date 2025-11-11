@@ -48,7 +48,7 @@ const MAX_STATUS_HISTORY = 5;
 const conversationQueue = new Map(); // channelId -> { currentUser, queue: [], isSending: false }
 
 // Processing lock per user (prevents parallel responses to same user)
-const userProcessingLock = new Map(); // userId -> { isProcessing: boolean, latestMessageId: string }
+const userProcessingLock = new Map(); // userId -> { isProcessing: boolean, latestMessageId: string, pendingMessages: [] }
 
 // Emoji reaction system - Misuki's custom emojis from the server
 const EMOJI_SERVER_ID = '1436369815798419519';
@@ -773,18 +773,22 @@ async function updateUserSummary(userId, userName) {
         });
         
         // Ask Claude to create a summary
-        const summaryPrompt = `Based on these conversations between Misuki and ${userName}, create a concise summary (150-300 characters) about ${userName} that captures:
+        const summaryPrompt = `Based on these conversations between Misuki and ${userName}, create a concise summary (150-300 characters) from Misuki's first-person perspective about ${userName}. Write as if you ARE Misuki describing your thoughts about them.
+
+Include:
 - Key facts about them (age, interests, location, job/school, etc.)
-- Important things they've shared
-- Relationship dynamic with Misuki
+- Important things they've shared with you
+- How you feel about your dynamic with them
 - Any ongoing situations or topics
 
-Keep it natural and information-dense. This will help Misuki remember ${userName} later.
+Write naturally in Misuki's voice, as her personal notes/thoughts about ${userName}. Use "they/them" pronouns and speak from your (Misuki's) point of view.
+
+Example style: "They're super nice to me! Never really stopped complimenting me!" or "They seem really interested in anime. We've been chatting about their favorite shows!"
 
 Conversations:
 ${conversationText}
 
-Create the summary now (150-300 characters):`;
+Create the summary now as Misuki (150-300 characters):`;
 
         const response = await axios.post('https://api.anthropic.com/v1/messages', {
             model: 'claude-sonnet-4-20250514',
@@ -2625,23 +2629,25 @@ client.on('messageCreate', async (message) => {
     // SELF-INTERRUPTION LOCK: Prevent parallel responses to same user
     const userId = message.author.id;
     let lockData = userProcessingLock.get(userId);
-    
+
     if (!lockData) {
-        lockData = { isProcessing: false, latestMessageId: null };
+        lockData = { isProcessing: false, latestMessageId: null, pendingMessages: [] };
         userProcessingLock.set(userId, lockData);
     }
-    
+
     if (lockData.isProcessing) {
         // Already processing a message from this user!
-        console.log(`🔄 ${message.author.username} sent new message while processing - updating`);
+        // Collect this message to concatenate with others
+        console.log(`🔄 ${message.author.username} sent new message while processing - buffering`);
+        lockData.pendingMessages.push(message);
         lockData.latestMessageId = message.id;
-        await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second pause
-        console.log(`   💭 Processing new message...`);
+        return; // Don't process immediately, let the current processing finish and pick up all pending messages
     }
-    
+
     // Set lock
     lockData.isProcessing = true;
     lockData.latestMessageId = message.id;
+    lockData.pendingMessages = []; // Clear any old pending messages
     const currentMessageId = message.id;
     
     // SERVER QUEUE SYSTEM
@@ -3043,9 +3049,47 @@ client.on('messageCreate', async (message) => {
             }
             
             // Success! Break out of retry loop
-            
-            // Release user processing lock
+
+            // Check for pending messages from same user (sent while we were processing)
             const finalLock = userProcessingLock.get(message.author.id);
+            if (finalLock && finalLock.pendingMessages.length > 0) {
+                console.log(`📬 Found ${finalLock.pendingMessages.length} pending message(s) from ${message.author.username}`);
+
+                // Wait a moment to see if more messages come in
+                await new Promise(resolve => setTimeout(resolve, 1500));
+
+                // Collect all pending messages
+                const pendingMessages = [...finalLock.pendingMessages];
+                finalLock.pendingMessages = []; // Clear the pending queue
+
+                // Concatenate all pending messages with the original message
+                const allMessages = [message, ...pendingMessages];
+                const combinedContent = allMessages.map(msg => msg.content).join('\n');
+                console.log(`📝 Combined ${allMessages.length} message(s) into one: "${combinedContent.substring(0, 100)}..."`);
+
+                // Use the LAST message as the base (it has all the Discord.js methods)
+                // But override its content with the combined content
+                const lastMessage = pendingMessages[pendingMessages.length - 1];
+
+                // Temporarily override the content property
+                const originalContent = lastMessage.content;
+                lastMessage.content = combinedContent;
+
+                // Release lock and re-trigger message handler
+                finalLock.isProcessing = false;
+
+                console.log(`🔄 Re-processing with combined messages...`);
+
+                // Emit message event with the modified last message
+                client.emit('messageCreate', lastMessage);
+
+                // Restore original content (just to be safe)
+                lastMessage.content = originalContent;
+
+                return;
+            }
+
+            // Release user processing lock
             if (finalLock) {
                 finalLock.isProcessing = false;
             }

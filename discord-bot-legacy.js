@@ -47,45 +47,48 @@ const MAX_STATUS_HISTORY = 5;
 // Conversation queue system - handles multiple people messaging at once
 const conversationQueue = new Map(); // channelId -> { currentUser, queue: [], isSending: false }
 
+// Processing lock per user (prevents parallel responses to same user)
+const userProcessingLock = new Map(); // userId -> { isProcessing: boolean, latestMessageId: string, pendingMessages: [] }
+
 // Emoji reaction system - Misuki's custom emojis from the server
 const EMOJI_SERVER_ID = '1436369815798419519';
 
 const customEmojis = {
     // Love & Affection
     cat_love: '<:cat_love:1437073036351246446>',
-    kanna_heart: '<:kanna_heart:1359900407987441974>',
-    
+    kanna_heart: '<:kanna_heart:1437072976259321916>',
+
     // Happy & Excited
-    wow: '<:wow:1210272709087600681>',
-    komi: '<a:komi:1123311536354623529>',
-    anime_clap: '<a:anime_clap_excited:1420281017750650891>',
-    
+    cat_sparkly_eyes: '<:cat_sparkly_eyes:1437073033037746188>',
+    cat_woah: '<:cat_woah:1437072981909311542>',
+    komi: '<a:komi_surprised_happy:1437073014524219436>',
+    clapping: '<a:clappinggg:1437072973403131904>',
+
     // Playful & Teasing
-    lapsmirk: '<:Lapsmirk:585596165454692375>',
-    dog_laugh: '<:dog_laugh:1344686486095925278>',
-    lol: '<:lol2:1210272715412348959>',
-    psycat_roll: '<a:psycat_roll:1365379635268948099>',
-    
+    lapsmirk: '<:lapras_smirk:1437072989974691982>',
+    dog_laugh: '<:dog_laugh:1437072986606927882>',
+    cat_laugh: '<:cat_laugh:1437073020647903272>',
+    cat_spinning: '<a:cat_spinning:1437073017820811377>',
+
     // Shy & Flustered
-    cute_shy: '<a:cute_shy:1344687016251756686>',
-    cat_stare: '<:cat_stare:1167394082620964954>',
-    
+    cute_shy: '<a:cute_shy:1437072996228530176>',
+
     // Sad & Concerned
-    sadly: '<:sadly3:1210272721175453747>',
-    cute_plead: '<:cute_plead:1420419726596771911>',
-    
+    cat_cry: '<:cat_cry:1437073025785921627>',
+    cute_plead: '<:cute_pleading:1437073000678559835>',
+
     // Thinking & Curious
-    pikathink: '<:kb_pikathink:1005605115035648081>',
-    
+    pikathink: '<:pikachu_thinking:1437073003773952011>',
+
     // Greetings
-    hi: '<:hi:1210272711906164746>',
-    
+    cat_wave: '<:cat_wave:1437073029547950110>',
+
     // Sleepy
-    sleepingg: '<:raidensleep:1126180427212783737>',
-    
+    sleepingg: '<:sleepinggg:1437072984203595949>',
+
     // Surprised/Shocked
-    cat_scream: '<:cat_scream:1359901563849806072>',
-    
+    cat_scream: '<:cat_scream:1437072979132551278>',
+
     // Agreement/Disagreement
     thats_true: '<:thats_true:1437073009256173699>',
     thats_false: '<:thats_false:1437073006626209834>'
@@ -194,37 +197,41 @@ function getReactionEmojis(messageContent, userProfile, currentActivity) {
     const reactions = [];
     const trustLevel = userProfile.trust_level;
     const isMainUser = userProfile.user_id === MAIN_USER_ID;
-    
+
     // 40% chance to react at all (makes reactions more special!)
     // Exception: Always react to "I love you" - her emotions are strong here!
+    // TEMP: Set to 100% for debugging
     const isLoveMessage = content.match(/\b(love you|love u|ily|i love)\b/i);
-    const shouldReact = isLoveMessage || Math.random() < 0.4;
-    
+    const randomValue = Math.random();
+    const shouldReact = isLoveMessage || randomValue < 1.0; // TEMP: Changed from 0.4 to 1.0 for testing
+
+    console.log(`   🎲 Reaction chance roll: ${randomValue.toFixed(2)} (threshold: 0.40) - ${shouldReact ? 'WILL REACT' : 'NO REACTION'}`);
+
     if (!shouldReact) {
         return []; // No reaction this time!
     }
     
     // For tracking what emojis were used (for explanation)
-    // Format: { id: 'emoji_id', name: 'emoji_name' }
+    // Format: { id: 'emoji_id', name: 'emoji_name', animated: boolean }
     
     // === LOVE EXPRESSIONS - Emotion depends on WHO said it ===
     if (content.match(/\b(love you|love u|ily|i love|❤️|💕|♥)/i)) {
         if (isMainUser) {
             // Dan saying "I love you" - She's deeply in love, overwhelmed with emotion!
-            reactions.push({ id: '1437073036351246446', name: 'cat_love' });
-            reactions.push({ id: '1359900407987441974', name: 'kanna_heart' });
+            reactions.push({ id: '1437073036351246446', name: 'cat_love', animated: false });
+            reactions.push({ id: '1437072976259321916', name: 'kanna_heart', animated: false });
             return reactions;
         } else if (trustLevel >= 7) {
             // Close friend - Flustered! Sweet but awkward
-            reactions.push({ id: '1344687016251756686', name: 'cute_shy' });
+            reactions.push({ id: '1437072996228530176', name: 'cute_shy', animated: true });
             return reactions;
         } else if (trustLevel >= 4) {
             // Acquaintance - Confused and awkward
-            reactions.push({ id: '1005605115035648081', name: 'kb_pikathink' });
+            reactions.push({ id: '1437073003773952011', name: 'pikachu_thinking', animated: false });
             return reactions;
         } else {
             // Stranger - Very confused/uncomfortable
-            reactions.push({ id: '1359901563849806072', name: 'cat_scream' });
+            reactions.push({ id: '1437072979132551278', name: 'cat_scream', animated: false });
             return reactions;
         }
     }
@@ -232,99 +239,99 @@ function getReactionEmojis(messageContent, userProfile, currentActivity) {
     // === COMPLIMENTS TO HER - Emotion depends on relationship ===
     if (content.match(/\b(you'?re (so )?(cute|adorable|sweet|pretty|beautiful)|good (girl|bot)|best (girl|bot))\b/i)) {
         if (isMainUser) {
-            reactions.push({ id: '1344687016251756686', name: 'cute_shy' });
+            reactions.push({ id: '1437072996228530176', name: 'cute_shy', animated: true });
         } else if (trustLevel >= 6) {
-            reactions.push({ id: '1344687016251756686', name: 'cute_shy' });
+            reactions.push({ id: '1437072996228530176', name: 'cute_shy', animated: true });
         } else {
-            reactions.push({ id: '1005605115035648081', name: 'kb_pikathink' });
+            reactions.push({ id: '1437073003773952011', name: 'pikachu_thinking', animated: false });
         }
         return reactions;
     }
-    
+
     // === GREETINGS - Emotion: Happy to see them! ===
     if (content.match(/^(hi|hey|hello|good morning|good night|gm|gn)\b/i)) {
         if (isMainUser) {
-            reactions.push({ id: '1210272711906164746', name: 'hi' });
-            if (Math.random() < 0.3) reactions.push({ id: '1437073036351246446', name: 'cat_love' });
+            reactions.push({ id: '1437073029547950110', name: 'cat_wave', animated: false });
+            if (Math.random() < 0.3) reactions.push({ id: '1437073036351246446', name: 'cat_love', animated: false });
         } else if (trustLevel >= 5) {
-            reactions.push({ id: '1210272711906164746', name: 'hi' });
+            reactions.push({ id: '1437073029547950110', name: 'cat_wave', animated: false });
         }
         return reactions;
     }
-    
+
     // === EXCITEMENT/GOOD NEWS - Emotion: Genuinely happy for them! ===
     if (content.match(/\b(won|passed|got an? a|succeeded|yes!|yay|amazing|awesome|great news)\b/i)) {
-        reactions.push({ id: '1420281017750650891', name: 'anime_clap_excited' });
+        reactions.push({ id: '1437072973403131904', name: 'clappinggg', animated: true });
         if (isMainUser) {
-            reactions.push({ id: '1437073036351246446', name: 'cat_love' });
+            reactions.push({ id: '1437073036351246446', name: 'cat_love', animated: false });
         }
         return reactions;
     }
-    
+
     // === FUNNY/LAUGHING - Emotion: Amused and laughing along! ===
     if (content.match(/\b(haha|lol|lmao|rofl|funny|hilarious|😂|🤣)\b/i)) {
-        reactions.push({ id: '1210272715412348959', name: 'lol2' });
+        reactions.push({ id: '1437073020647903272', name: 'cat_laugh', animated: false });
         return reactions;
     }
     
     // === SAD/TIRED - Emotion: Empathy and concern ===
     if (content.match(/\b(tired|exhausted|sad|depressed|rough day|bad day|crying|😢|😭)\b/i)) {
         if (isMainUser || trustLevel >= 6) {
-            reactions.push({ id: '1420419726596771911', name: 'cute_plead' });
-            if (isMainUser) reactions.push({ id: '🫂', name: 'hug' }); // built-in
+            reactions.push({ id: '1437073000678559835', name: 'cute_pleading', animated: false });
+            if (isMainUser) reactions.push({ id: '🫂', name: 'hug', animated: false }); // built-in
         } else if (trustLevel >= 4) {
-            reactions.push({ id: '1420419726596771911', name: 'cute_plead' });
+            reactions.push({ id: '1437073000678559835', name: 'cute_pleading', animated: false });
         }
         return reactions;
     }
-    
+
     // === SLEEP/GOODNIGHT - Emotion: Sleepy empathy or caring ===
     if (content.match(/\b(sleep|sleeping|sleepy|goodnight|gn|bed|tired)\b/i)) {
         if (currentActivity.type === 'sleep' || currentActivity.activity.includes('sleep')) {
-            reactions.push({ id: '1126180427212783737', name: 'raidensleep' });
+            reactions.push({ id: '1437072984203595949', name: 'sleepinggg', animated: false });
         } else if (isMainUser) {
-            reactions.push({ id: '1126180427212783737', name: 'raidensleep' });
-            reactions.push({ id: '1437073036351246446', name: 'cat_love' });
+            reactions.push({ id: '1437072984203595949', name: 'sleepinggg', animated: false });
+            reactions.push({ id: '1437073036351246446', name: 'cat_love', animated: false });
         } else if (trustLevel >= 6) {
-            reactions.push({ id: '1126180427212783737', name: 'raidensleep' });
+            reactions.push({ id: '1437072984203595949', name: 'sleepinggg', animated: false });
         }
         return reactions;
     }
-    
+
     // === QUESTIONS - Emotion: Curious and thinking ===
     if (content.includes('?') && !reactions.length) {
-        reactions.push({ id: '1005605115035648081', name: 'kb_pikathink' });
+        reactions.push({ id: '1437073003773952011', name: 'pikachu_thinking', animated: false });
         return reactions;
     }
     
     // === AGREEMENT - Emotion: Agrees enthusiastically! ===
     if (content.match(/\b(right|correct|true|exactly|agree|yeah|yep|facts)\b/i)) {
-        reactions.push({ id: '1437073009256173699', name: 'thats_true' });
+        reactions.push({ id: '1437073009256173699', name: 'thats_true', animated: false });
         return reactions;
     }
     
     // === FOOD MENTIONS - Emotion: Excited about food! ===
     if (content.match(/\b(ramen|food|eat|eating|hungry|lunch|dinner|breakfast|delicious)\b/i)) {
-        reactions.push({ id: '🍜', name: 'ramen' }); // built-in
+        reactions.push({ id: '🍜', name: 'ramen', animated: false }); // built-in
         if (content.includes('ramen')) {
-            reactions.push({ id: '1210272709087600681', name: 'wow' });
+            reactions.push({ id: '1437073033037746188', name: 'cat_sparkly_eyes', animated: false });
         }
         return reactions;
     }
-    
+
     // === SURPRISE/SHOCK - Emotion: Genuinely surprised! ===
     if (content.match(/\b(what|omg|wtf|no way|seriously|really\?!|wow)\b/i)) {
         if (content.match(/\b(wtf|what the)\b/i)) {
-            reactions.push({ id: '1359901563849806072', name: 'cat_scream' });
+            reactions.push({ id: '1437072979132551278', name: 'cat_scream', animated: false });
         } else {
-            reactions.push({ id: '1210272709087600681', name: 'wow' });
+            reactions.push({ id: '1437072981909311542', name: 'cat_woah', animated: false });
         }
         return reactions;
     }
-    
+
     // === PLAYFUL/TEASING - Emotion: Playful mood! ===
     if (content.match(/\b(hehe|tease|teasing|silly|goofy)\b/i)) {
-        reactions.push({ id: '585596165454692375', name: 'Lapsmirk' });
+        reactions.push({ id: '1437072989974691982', name: 'lapras_smirk', animated: false });
         return reactions;
     }
     
@@ -2232,10 +2239,10 @@ ${userName}: ${userMessage}`;
             temperature: 1.0
         };
         
-        // Disable GIF tool if context is too large (over 4000 tokens estimated)
+        // Disable GIF tool if context is too large (over 3500 tokens estimated)
         // This prevents empty responses when token budget is tight
         // Note: GIF is nice-to-have, but reliable responses are critical
-        if (includeTools && inputTokenEstimate < 4000) {
+        if (includeTools && inputTokenEstimate < 3500) {
             config.tools = [
                 {
                     name: 'web_search',
@@ -2568,12 +2575,34 @@ client.once('ready', () => {
     console.log(`🎯 Discord status: DYNAMIC (updates every 2 min)`);
     console.log(`💌 Proactive messaging: ENABLED (initiates conversations with Dan)`);
     console.log(`🔄 MySQL connection: POOLED (prevents timeout errors)`);
-    
+
+    // Debug: Log emoji cache info
+    console.log(`\n😊 Emoji Debug Info:`);
+    console.log(`   📊 Total emojis in cache: ${client.emojis.cache.size}`);
+    console.log(`   🏰 Servers bot is in: ${client.guilds.cache.size}`);
+
+    // Check if bot has access to required emoji server
+    const emojiServer = client.guilds.cache.get(EMOJI_SERVER_ID);
+    if (emojiServer) {
+        console.log(`   ✅ Bot IS in emoji server: ${emojiServer.name}`);
+    } else {
+        console.log(`   ⚠️ Bot is NOT in emoji server (ID: ${EMOJI_SERVER_ID})`);
+        console.log(`   ⚠️ Custom emoji reactions will NOT work!`);
+    }
+
+    // List all available custom emojis
+    if (client.emojis.cache.size > 0) {
+        console.log(`   📝 First 10 available emojis:`);
+        const emojis = Array.from(client.emojis.cache.values()).slice(0, 10);
+        emojis.forEach(e => console.log(`      - ${e.name} (${e.id})`));
+    }
+    console.log('');
+
     updateDiscordStatus();
     // Update status every 2 minutes for micro-status updates!
     // Also checks for proactive messaging opportunities
     setInterval(updateDiscordStatus, 2 * 60 * 1000);
-    
+
     connectDB().catch(console.error);
 });
 
@@ -2591,8 +2620,34 @@ client.on('messageCreate', async (message) => {
         }
         // In allowed channel - only respond when mentioned
         if (!isMentioned) return;
-        
-        // QUEUE SYSTEM: Check if we're already responding to someone else
+    }
+    
+    // SELF-INTERRUPTION LOCK: Prevent parallel responses to same user
+    const userId = message.author.id;
+    let lockData = userProcessingLock.get(userId);
+
+    if (!lockData) {
+        lockData = { isProcessing: false, latestMessageId: null, pendingMessages: [] };
+        userProcessingLock.set(userId, lockData);
+    }
+
+    if (lockData.isProcessing) {
+        // Already processing a message from this user!
+        // Collect this message to concatenate with others
+        console.log(`🔄 ${message.author.username} sent new message while processing - buffering`);
+        lockData.pendingMessages.push(message);
+        lockData.latestMessageId = message.id;
+        return; // Don't process immediately, let the current processing finish and pick up all pending messages
+    }
+
+    // Set lock
+    lockData.isProcessing = true;
+    lockData.latestMessageId = message.id;
+    lockData.pendingMessages = []; // Clear any old pending messages
+    const currentMessageId = message.id;
+    
+    // SERVER QUEUE SYSTEM
+    if (!isDM) {
         const channelId = message.channel.id;
         let queueData = conversationQueue.get(channelId);
         
@@ -2655,23 +2710,87 @@ client.on('messageCreate', async (message) => {
             // Store what reactions we used so we can tell Claude about them
             let usedReactions = [];
             let reactionExplanation = '';
-            
+
+            console.log(`🎭 Setting up emoji reaction handler (isDM: ${isDM})`);
+
             setTimeout(async () => {
+                console.log(`🎭 Emoji reaction callback executing...`);
                 try {
+                    // Check permissions first (for server messages)
+                    if (!isDM) {
+                        const botMember = message.guild.members.cache.get(client.user.id);
+                        const permissions = message.channel.permissionsFor(botMember);
+
+                        if (!permissions.has('AddReactions')) {
+                            console.log(`   ⚠️ Bot lacks ADD_REACTIONS permission in this channel!`);
+                            return; // Skip reactions
+                        }
+                    }
+
                     const reactEmojis = getReactionEmojis(message.content, userProfile, getMisukiCurrentActivity());
                     usedReactions = reactEmojis;
-                    
+
+                    console.log(`🎭 getReactionEmojis returned ${reactEmojis.length} emoji(s):`, reactEmojis);
+
+                    if (reactEmojis.length === 0) {
+                        console.log(`🎭 No reactions selected for this message`);
+                        return; // No reactions to add
+                    }
+
+                    let successCount = 0;
                     for (const emoji of reactEmojis) {
-                        // Extract just the ID for Discord.js react()
-                        const emojiId = emoji.id;
-                        await message.react(emojiId).catch(err => {
-                            console.log(`   ⚠️ Couldn't react with ${emoji.name} (${emojiId}):`, err.message);
-                        });
+                        // For custom emojis, we need to fetch from client cache or construct proper identifier
+                        // For built-in Unicode emojis, just use the emoji directly
+                        let emojiToReact;
+
+                        if (emoji.id.match(/^\d+$/)) {
+                            // Custom emoji - try to get from cache first
+                            const cachedEmoji = client.emojis.cache.get(emoji.id);
+                            if (cachedEmoji) {
+                                // Use the cached emoji object (best approach)
+                                emojiToReact = cachedEmoji;
+                                console.log(`   🔍 Using cached emoji: ${emoji.name}`);
+                            } else {
+                                // If not in cache, the bot might not have access to this emoji
+                                console.log(`   ⚠️ Emoji ${emoji.name} (${emoji.id}) not in cache!`);
+                                console.log(`   🔍 Available emoji count: ${client.emojis.cache.size}`);
+                                console.log(`   🔍 Trying alternate method...`);
+
+                                // Try fetching from the specific server
+                                if (!isDM && message.guild) {
+                                    const guildEmoji = message.guild.emojis.cache.get(emoji.id);
+                                    if (guildEmoji) {
+                                        emojiToReact = guildEmoji;
+                                        console.log(`   ✅ Found emoji in current server's cache!`);
+                                    } else {
+                                        console.log(`   ❌ Emoji not in current server either - skipping`);
+                                        continue; // Skip this emoji
+                                    }
+                                } else {
+                                    continue; // Skip this emoji
+                                }
+                            }
+                        } else {
+                            // Built-in Unicode emoji (like 🫂, 🍜)
+                            emojiToReact = emoji.id;
+                        }
+
+                        try {
+                            await message.react(emojiToReact);
+                            successCount++;
+                            console.log(`   ✅ Successfully reacted with ${emoji.name}`);
+                        } catch (err) {
+                            console.log(`   ⚠️ Couldn't react with ${emoji.name} (${emoji.id}):`, err.message);
+                            console.log(`   📝 Error details:`, err);
+                            // Remove from usedReactions if it failed
+                            const index = usedReactions.findIndex(e => e.id === emoji.id);
+                            if (index > -1) usedReactions.splice(index, 1);
+                        }
                         // Small delay between multiple reactions
                         await new Promise(resolve => setTimeout(resolve, 300));
                     }
-                    if (reactEmojis.length > 0) {
-                        console.log(`   💕 Reacted with ${reactEmojis.length} emoji(s)`);
+                    if (successCount > 0) {
+                        console.log(`   💕 Reacted with ${successCount} emoji(s)`);
                     }
                 } catch (err) {
                     // Reactions are optional, don't break if they fail
@@ -2780,7 +2899,7 @@ client.on('messageCreate', async (message) => {
                            userMessage.toLowerCase().includes('upset') ? 'negative' : 'positive';
             await updateEmotionalState(userProfile.user_id, emotion);
             
-            // Smart message splitting - but keep URLs intact!
+            // Smart message splitting - but keep URLs and kaomoji intact!
             let messages = [];
             
             // Always send text (we ensured finalResponse exists above)
@@ -2792,16 +2911,49 @@ client.on('messageCreate', async (message) => {
                 // If there's a URL, don't split the message - send it all at once
                 messages = [finalResponse];
             } else {
-                // No URL - use normal smart splitting
-                const sentences = finalResponse.match(/[^.!?]+[.!?]+/g) || [finalResponse];
+                // Common kaomoji patterns that shouldn't be broken
+                const kaomojiPatterns = [
+                    /\([\^˶ᵔᴗ_><꒰ᐢ\-ω≧ᵕ]+[\s\.][\s\.]?[\^˶ᵔᴗ_><꒰ᐢ\-ω≧ᵕ]+\)/g,  // (˶ᵔ ᵕ ᵔ˶), (˶ᵕ ᵕ˶)
+                    />\.[\s]?</g,  // >.<, > . <
+                    /꒰ᐢ\.[\s\.]?\.?\s?ᐢ꒱/g,  // ꒰ᐢ. . ᐢ꒱
+                    /\^\^/g,  // ^^
+                    />\/\/</g,  // >///<
+                    />\/\/\/</g,  // >////<
+                    /\(\s?[><\-\^ᵕω]\s?[><\-_ᵕω]\s?[><\-\^ᵕω]\s?\)/g  // Generic emoticons
+                ];
+                
+                // Protect kaomoji by temporarily replacing them
+                let protectedText = finalResponse;
+                const kaomojiMap = new Map();
+                let kaomojiIndex = 0;
+                
+                kaomojiPatterns.forEach(pattern => {
+                    protectedText = protectedText.replace(pattern, (match) => {
+                        const placeholder = `__KAOMOJI${kaomojiIndex}__`;
+                        kaomojiMap.set(placeholder, match);
+                        kaomojiIndex++;
+                        return placeholder;
+                    });
+                });
+                
+                // Now split on sentence endings (with kaomoji protected)
+                const sentences = protectedText.match(/[^.!?]+[.!?]+/g) || [protectedText];
                 
                 if (sentences.length <= 2) {
-                    messages = [finalResponse];
+                    // Restore kaomoji
+                    let restoredText = finalResponse;
+                    messages = [restoredText];
                 } else {
                     let currentMessage = '';
                     
                     for (let i = 0; i < sentences.length; i++) {
-                        const sentence = sentences[i].trim();
+                        let sentence = sentences[i].trim();
+                        
+                        // Restore kaomoji in this sentence
+                        kaomojiMap.forEach((original, placeholder) => {
+                            sentence = sentence.replace(placeholder, original);
+                        });
+                        
                         const sentenceCount = (currentMessage.match(/[.!?]+/g) || []).length;
                         
                         if (currentMessage && (currentMessage.length > 150 || sentenceCount >= 2)) {
@@ -2828,6 +2980,14 @@ client.on('messageCreate', async (message) => {
                         if (i === 0) {
                             await message.reply(messages[i]);
                         } else {
+                            // Check if user sent a newer message (self-interruption)
+                            const currentLock = userProcessingLock.get(message.author.id);
+                            if (currentLock && currentLock.latestMessageId !== currentMessageId) {
+                                // User sent a newer message! Abort this response
+                                console.log(`   🛑 Aborting - user sent a newer message`);
+                                break; // Exit the for loop, don't send remaining messages
+                            }
+                            
                             const typingTime = messages[i].length * 50 + Math.random() * 1000;
                             const pauseTime = 500 + Math.random() * 500;
                             const totalDelay = Math.min(typingTime + pauseTime, 5000);
@@ -2885,6 +3045,50 @@ client.on('messageCreate', async (message) => {
             }
             
             // Success! Break out of retry loop
+
+            // Check for pending messages from same user (sent while we were processing)
+            const finalLock = userProcessingLock.get(message.author.id);
+            if (finalLock && finalLock.pendingMessages.length > 0) {
+                console.log(`📬 Found ${finalLock.pendingMessages.length} pending message(s) from ${message.author.username}`);
+
+                // Wait a moment to see if more messages come in
+                await new Promise(resolve => setTimeout(resolve, 1500));
+
+                // Collect all pending messages
+                const pendingMessages = [...finalLock.pendingMessages];
+                finalLock.pendingMessages = []; // Clear the pending queue
+
+                // Concatenate all pending messages with the original message
+                const allMessages = [message, ...pendingMessages];
+                const combinedContent = allMessages.map(msg => msg.content).join('\n');
+                console.log(`📝 Combined ${allMessages.length} message(s) into one: "${combinedContent.substring(0, 100)}..."`);
+
+                // Use the LAST message as the base (it has all the Discord.js methods)
+                // But override its content with the combined content
+                const lastMessage = pendingMessages[pendingMessages.length - 1];
+
+                // Temporarily override the content property
+                const originalContent = lastMessage.content;
+                lastMessage.content = combinedContent;
+
+                // Release lock and re-trigger message handler
+                finalLock.isProcessing = false;
+
+                console.log(`🔄 Re-processing with combined messages...`);
+
+                // Emit message event with the modified last message
+                client.emit('messageCreate', lastMessage);
+
+                // Restore original content (just to be safe)
+                lastMessage.content = originalContent;
+
+                return;
+            }
+
+            // Release user processing lock
+            if (finalLock) {
+                finalLock.isProcessing = false;
+            }
             
             // QUEUE SYSTEM: Process next person in queue (if in server)
             if (!isDM && message.channel.id) {
