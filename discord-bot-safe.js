@@ -26,6 +26,7 @@ const client = new Client({
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.DirectMessages,
         GatewayIntentBits.DirectMessageTyping,
+        GatewayIntentBits.GuildMessageTyping,
         GatewayIntentBits.GuildPresences
     ],
     partials: [Partials.Channel]
@@ -198,14 +199,13 @@ function getReactionEmojis(messageContent, userProfile, currentActivity) {
     const trustLevel = userProfile.trust_level;
     const isMainUser = userProfile.user_id === MAIN_USER_ID;
 
-    // 40% chance to react at all (makes reactions more special!)
+    // 15% chance to react at all (makes reactions more special!)
     // Exception: Always react to "I love you" - her emotions are strong here!
-    // TEMP: Set to 100% for debugging
     const isLoveMessage = content.match(/\b(love you|love u|ily|i love)\b/i);
     const randomValue = Math.random();
-    const shouldReact = isLoveMessage || randomValue < 1.0; // TEMP: Changed from 0.4 to 1.0 for testing
+    const shouldReact = isLoveMessage || randomValue < 0.15;
 
-    console.log(`   🎲 Reaction chance roll: ${randomValue.toFixed(2)} (threshold: 0.40) - ${shouldReact ? 'WILL REACT' : 'NO REACTION'}`);
+    console.log(`   🎲 Reaction chance roll: ${randomValue.toFixed(2)} (threshold: 0.15) - ${shouldReact ? 'WILL REACT' : 'NO REACTION'}`);
 
     if (!shouldReact) {
         return []; // No reaction this time!
@@ -2694,18 +2694,16 @@ client.once('ready', () => {
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
-    
+
     const isDM = !message.guild;
-    const isMentioned = message.mentions.has(client.user);
-    
-    // Only respond in DMs OR in the allowed channel when mentioned
+
+    // Only respond in DMs OR in the allowed channel
     if (!isDM) {
         // In a server - check if it's the allowed channel
         if (message.channel.id !== ALLOWED_CHANNEL_ID) {
             return; // Ignore messages in other channels
         }
-        // In allowed channel - only respond when mentioned
-        if (!isMentioned) return;
+        // In allowed channel - respond to all messages (no mention required!)
     }
     
     // SELF-INTERRUPTION LOCK: Prevent parallel responses to same user
@@ -3251,6 +3249,87 @@ client.on('messageCreate', async (message) => {
             }
         }
     }
+});
+
+// ============================================
+// TYPING INDICATOR TRACKING
+// ============================================
+
+// Track active typers: channelId -> Map<userId, { username, startTime, lastUpdate }>
+const activeTypers = new Map();
+
+// Update interval for showing who's typing (every 1 second)
+let typingUpdateInterval = null;
+
+function startTypingUpdates() {
+    if (typingUpdateInterval) return; // Already running
+
+    typingUpdateInterval = setInterval(() => {
+        const now = Date.now();
+        let hasActiveTypers = false;
+
+        for (const [channelId, typers] of activeTypers.entries()) {
+            // Remove typers who haven't typed in 10 seconds (Discord typing timeout)
+            for (const [userId, data] of typers.entries()) {
+                if (now - data.lastUpdate > 10000) {
+                    console.log(`⌨️  ${data.username} stopped typing in ${data.channelName}`);
+                    typers.delete(userId);
+                }
+            }
+
+            // Remove empty channels
+            if (typers.size === 0) {
+                activeTypers.delete(channelId);
+            } else {
+                hasActiveTypers = true;
+                // Show current typers
+                const typerNames = Array.from(typers.values()).map(t => t.username).join(', ');
+                const channelName = Array.from(typers.values())[0].channelName;
+                console.log(`⌨️  Currently typing in ${channelName}: ${typerNames}`);
+            }
+        }
+
+        // Stop interval if nobody is typing
+        if (!hasActiveTypers && typingUpdateInterval) {
+            clearInterval(typingUpdateInterval);
+            typingUpdateInterval = null;
+        }
+    }, 1000);
+}
+
+client.on('typingStart', (typing) => {
+    const user = typing.user;
+    const channel = typing.channel;
+
+    // Ignore bot typing
+    if (user.bot) return;
+
+    const channelName = channel.guild ? `#${channel.name}` : `DM with ${channel.recipient?.username || 'Unknown'}`;
+    const now = Date.now();
+
+    // Get or create channel typing map
+    if (!activeTypers.has(channel.id)) {
+        activeTypers.set(channel.id, new Map());
+    }
+
+    const channelTypers = activeTypers.get(channel.id);
+    const isNewTyper = !channelTypers.has(user.id);
+
+    // Update or add typer
+    channelTypers.set(user.id, {
+        username: user.username,
+        channelName: channelName,
+        startTime: channelTypers.get(user.id)?.startTime || now,
+        lastUpdate: now
+    });
+
+    // Only log when someone starts typing (not on updates)
+    if (isNewTyper) {
+        console.log(`⌨️  ${user.username} started typing in ${channelName}`);
+    }
+
+    // Start the update interval if not already running
+    startTypingUpdates();
 });
 
 client.on('error', (error) => {
