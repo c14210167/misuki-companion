@@ -198,14 +198,13 @@ function getReactionEmojis(messageContent, userProfile, currentActivity) {
     const trustLevel = userProfile.trust_level;
     const isMainUser = userProfile.user_id === MAIN_USER_ID;
 
-    // 40% chance to react at all (makes reactions more special!)
+    // 15% chance to react at all (makes reactions more special!)
     // Exception: Always react to "I love you" - her emotions are strong here!
-    // TEMP: Set to 100% for debugging
     const isLoveMessage = content.match(/\b(love you|love u|ily|i love)\b/i);
     const randomValue = Math.random();
-    const shouldReact = isLoveMessage || randomValue < 1.0; // TEMP: Changed from 0.4 to 1.0 for testing
+    const shouldReact = isLoveMessage || randomValue < 0.15;
 
-    console.log(`   🎲 Reaction chance roll: ${randomValue.toFixed(2)} (threshold: 0.40) - ${shouldReact ? 'WILL REACT' : 'NO REACTION'}`);
+    console.log(`   🎲 Reaction chance roll: ${randomValue.toFixed(2)} (threshold: 0.15) - ${shouldReact ? 'WILL REACT' : 'NO REACTION'}`);
 
     if (!shouldReact) {
         return []; // No reaction this time!
@@ -421,9 +420,9 @@ async function getUserProfile(discordId, username) {
         const userSummary = isMainUser ? null : 'New person - getting to know them';
         
         await db.execute(
-            `INSERT INTO users 
-             (discord_id, username, display_name, trust_level, relationship_notes, user_summary, total_messages) 
-             VALUES (?, ?, ?, ?, ?, ?, 1)`,
+            `INSERT INTO users
+             (discord_id, username, display_name, trust_level, relationship_notes, user_summary, total_messages, positive_interactions)
+             VALUES (?, ?, ?, ?, ?, ?, 1, 0)`,
             [discordId, username, username, trustLevel, relationshipNotes, userSummary]
         );
         
@@ -495,7 +494,7 @@ async function getConversationHistory(userId, limit = 10) {
 // Save conversation to database
 async function saveConversation(userId, userMessage, misukiResponse, mood = 'gentle', context = 'dm') {
     await db.execute(
-        `INSERT INTO conversations (user_id, user_message, misuki_response, mood, timestamp) 
+        `INSERT INTO conversations (user_id, user_message, misuki_response, mood, timestamp)
          VALUES (?, ?, ?, ?, NOW())`,
         [userId, userMessage, misukiResponse, mood]
     );
@@ -504,12 +503,71 @@ async function saveConversation(userId, userMessage, misukiResponse, mood = 'gen
 // Update user's emotional state
 async function updateEmotionalState(userId, emotion) {
     if (emotion === 'neutral') return;
-    
+
     await db.execute(
         `INSERT INTO emotional_states (user_id, detected_emotion, context, timestamp)
          VALUES (?, ?, '', NOW())`,
         [userId, emotion]
     );
+}
+
+// Detect if a message is a positive interaction
+function isPositiveInteraction(messageContent) {
+    const content = messageContent.toLowerCase();
+
+    // Positive keywords and patterns
+    const positivePatterns = [
+        /\b(love|like|enjoy|appreciate|thank|thanks|grateful|awesome|amazing|great|wonderful|fantastic)\b/i,
+        /\b(cute|adorable|sweet|pretty|beautiful|lovely|nice|kind)\b/i,
+        /\b(good|best|perfect|excellent|brilliant|impressive)\b/i,
+        /\b(happy|glad|pleased|excited|delighted)\b/i,
+        /\b(help|support|care|understand|thoughtful)\b/i,
+        /❤️|💕|💖|💗|💝|💓|💞|🥰|😊|😍|🤗|👍|✨/
+    ];
+
+    return positivePatterns.some(pattern => pattern.test(content));
+}
+
+// Update trust level based on positive interactions
+async function updateTrustLevel(userId, userMessage, isMainUser) {
+    // Don't update trust for main user (Dan) - he's already at max
+    if (isMainUser) return;
+
+    // Check if this is a positive interaction
+    if (!isPositiveInteraction(userMessage)) return;
+
+    try {
+        // Increment positive_interactions counter
+        await db.execute(
+            'UPDATE users SET positive_interactions = positive_interactions + 1 WHERE user_id = ?',
+            [userId]
+        );
+
+        // Get current stats
+        const [rows] = await db.execute(
+            'SELECT positive_interactions, trust_level FROM users WHERE user_id = ?',
+            [userId]
+        );
+
+        if (rows.length === 0) return;
+
+        const { positive_interactions, trust_level } = rows[0];
+
+        // Every 10 positive interactions = +1 trust level (max 5 for non-main users)
+        const newTrustLevel = Math.min(5, Math.floor(positive_interactions / 10) + 1);
+
+        // Update trust level if it increased
+        if (newTrustLevel > trust_level) {
+            await db.execute(
+                'UPDATE users SET trust_level = ? WHERE user_id = ?',
+                [newTrustLevel, userId]
+            );
+            console.log(`   💖 Trust level increased to ${newTrustLevel} for user ${userId}`);
+        }
+
+    } catch (error) {
+        console.error('Error updating trust level:', error.message);
+    }
 }
 
 // =========================================
@@ -2048,13 +2106,31 @@ ${otherUsers.map(u => {
 ${otherConversations.length > 0 ? otherConversations.map(conv => {
     let snippet = `\nWith ${conv.user} (trust level ${conv.trustLevel}/10):\n`;
     conv.messages.forEach(msg => {
-        snippet += `${conv.user}: ${msg.user_message}\n`;
-        snippet += `You: ${msg.misuki_response}\n`;
+        // Format timestamp to show how recent this conversation was
+        const msgTime = new Date(msg.timestamp);
+        const now = new Date();
+        const timeDiffMs = now - msgTime;
+        const timeDiffMinutes = Math.round(timeDiffMs / 60000);
+        const timeDiffHours = Math.round(timeDiffMs / 3600000);
+        const timeDiffDays = Math.floor(timeDiffMs / 86400000);
+
+        let timeAgo = '';
+        if (timeDiffMinutes < 60) {
+            timeAgo = `${timeDiffMinutes} minute${timeDiffMinutes !== 1 ? 's' : ''} ago`;
+        } else if (timeDiffHours < 24) {
+            timeAgo = `${timeDiffHours} hour${timeDiffHours !== 1 ? 's' : ''} ago`;
+        } else {
+            timeAgo = `${timeDiffDays} day${timeDiffDays !== 1 ? 's' : ''} ago`;
+        }
+
+        snippet += `[${timeAgo}] ${conv.user}: ${msg.user_message}\n`;
+        snippet += `[${timeAgo}] You: ${msg.misuki_response}\n`;
     });
     return snippet;
 }).join('\n') : '(No recent conversations with others yet)'}
 
 Note: You can naturally mention these people and recall what they talked about if Dan asks!
+The timestamps show when each conversation happened - pay attention to whether it was minutes, hours, or days ago!
 You're comfortable sharing with Dan about your interactions with others.
 `;
     }
@@ -2112,6 +2188,11 @@ ${serverChannelContext}
 - Dan lives with his grandma in Surabaya, with two younger cousins, and uncle and auntie.
 - You are a Christian, going to Church early in the morning every sunday.
 - Dan loves to draw, write his light novel, play music, and play games.
+
+=== YOUR APPEARANCE ===
+- You have white hair and blue eyes.
+- Your height is only 158 cm, while Dan is 178 cm.
+- THIS IS SOMETHING REALLY PRIVATE: You have inverted nipples.
 
 === 🚨 YOUR BACKGROUND & WEEKLY ROUTINE ===
 CRITICAL - READ CAREFULLY:
@@ -2732,7 +2813,6 @@ client.on('messageCreate', async (message) => {
                     }
 
                     const reactEmojis = getReactionEmojis(message.content, userProfile, getMisukiCurrentActivity());
-                    usedReactions = reactEmojis;
 
                     console.log(`🎭 getReactionEmojis returned ${reactEmojis.length} emoji(s):`, reactEmojis);
 
@@ -2740,6 +2820,16 @@ client.on('messageCreate', async (message) => {
                         console.log(`🎭 No reactions selected for this message`);
                         return; // No reactions to add
                     }
+
+                    // 20% chance to actually react
+                    const reactionChance = Math.random();
+                    if (reactionChance > 0.20) {
+                        console.log(`🎭 Reaction skipped (chance: ${(reactionChance * 100).toFixed(1)}% > 20%)`);
+                        return;
+                    }
+
+                    console.log(`🎭 Reaction proceeding (chance: ${(reactionChance * 100).toFixed(1)}% <= 20%)`);
+                    usedReactions = reactEmojis;
 
                     let successCount = 0;
                     for (const emoji of reactEmojis) {
@@ -2895,11 +2985,14 @@ client.on('messageCreate', async (message) => {
             // This allows Dan to ask about server conversations in private DMs
             const contextType = isDM ? 'dm' : 'server';
             await saveConversation(userProfile.user_id, userMessage, finalResponse, 'gentle', contextType);
-            
+
             console.log(`   💾 Saved to database: ${isDM ? 'DM' : 'Server'} conversation with ${userName}`);
-            
-            const emotion = userMessage.toLowerCase().includes('sad') || 
-                           userMessage.toLowerCase().includes('tired') || 
+
+            // Update trust level based on positive interactions
+            await updateTrustLevel(userProfile.user_id, userMessage, isMainUser);
+
+            const emotion = userMessage.toLowerCase().includes('sad') ||
+                           userMessage.toLowerCase().includes('tired') ||
                            userMessage.toLowerCase().includes('upset') ? 'negative' : 'positive';
             await updateEmotionalState(userProfile.user_id, emotion);
             
