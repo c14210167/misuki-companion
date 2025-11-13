@@ -51,6 +51,10 @@ const conversationQueue = new Map(); // channelId -> { currentUser, queue: [], i
 // Processing lock per user (prevents parallel responses to same user)
 const userProcessingLock = new Map(); // userId -> { isProcessing: boolean, latestMessageId: string, pendingMessages: [] }
 
+// Message buffer system - waits for user to finish typing before responding
+// userId -> { messages: [], timeout: timeoutId, isWaiting: boolean }
+const messageBuffer = new Map();
+
 // Emoji reaction system - Misuki's custom emojis from the server
 const EMOJI_SERVER_ID = '1436369815798419519';
 
@@ -2692,6 +2696,19 @@ client.once('ready', () => {
     connectDB().catch(console.error);
 });
 
+// Helper function to check if a user is currently typing in a channel
+function isUserTyping(userId, channelId) {
+    const channelTypers = activeTypers.get(channelId);
+    if (!channelTypers) return false;
+
+    const typerData = channelTypers.get(userId);
+    if (!typerData) return false;
+
+    // Check if typing data is recent (within 10 seconds)
+    const now = Date.now();
+    return (now - typerData.lastUpdate) < 10000;
+}
+
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
@@ -2705,9 +2722,88 @@ client.on('messageCreate', async (message) => {
         }
         // In allowed channel - respond to all messages (no mention required!)
     }
-    
-    // SELF-INTERRUPTION LOCK: Prevent parallel responses to same user
+
     const userId = message.author.id;
+    const channelId = message.channel.id;
+
+    // MESSAGE BUFFERING SYSTEM - Wait for user to finish typing
+    let bufferData = messageBuffer.get(userId);
+
+    if (!bufferData) {
+        bufferData = { messages: [], timeout: null, checkInterval: null };
+        messageBuffer.set(userId, bufferData);
+    }
+
+    // Add message to buffer
+    bufferData.messages.push(message);
+
+    // Clear existing timeout and interval if any
+    if (bufferData.timeout) {
+        clearTimeout(bufferData.timeout);
+    }
+    if (bufferData.checkInterval) {
+        clearInterval(bufferData.checkInterval);
+    }
+
+    console.log(`📨 Message from ${message.author.username} - buffering (${bufferData.messages.length} message(s) so far, waiting for more...)`);
+
+    // Set a new timeout to check if user is still typing after 6 seconds
+    bufferData.timeout = setTimeout(async () => {
+        console.log(`⏱️  6 seconds passed - checking if ${message.author.username} is still typing...`);
+
+        // Check if user is still typing
+        if (isUserTyping(userId, channelId)) {
+            console.log(`⌨️  ${message.author.username} is still typing - waiting...`);
+
+            // Keep checking every 2 seconds until they stop typing
+            bufferData.checkInterval = setInterval(async () => {
+                if (!isUserTyping(userId, channelId)) {
+                    console.log(`✅ ${message.author.username} stopped typing - processing ${bufferData.messages.length} message(s)`);
+                    clearInterval(bufferData.checkInterval);
+
+                    // Get all buffered messages
+                    const allBufferedMessages = bufferData.messages;
+                    const lastMessage = allBufferedMessages[allBufferedMessages.length - 1];
+
+                    // Clear buffer
+                    messageBuffer.delete(userId);
+
+                    // Process with the last message (will reply to it)
+                    await processMessage(lastMessage, allBufferedMessages);
+                } else {
+                    console.log(`⌨️  ${message.author.username} still typing...`);
+                }
+            }, 2000);
+        } else {
+            console.log(`✅ ${message.author.username} not typing - processing ${bufferData.messages.length} message(s)`);
+
+            // Get all buffered messages
+            const allBufferedMessages = bufferData.messages;
+            const lastMessage = allBufferedMessages[allBufferedMessages.length - 1];
+
+            // Clear buffer
+            messageBuffer.delete(userId);
+
+            // Process with the last message (will reply to it)
+            await processMessage(lastMessage, allBufferedMessages);
+        }
+    }, 6000);
+});
+
+// Main message processing function
+async function processMessage(message, allBufferedMessages = [message]) {
+    const isDM = !message.guild;
+    const userId = message.author.id;
+
+    // Log combined message info
+    if (allBufferedMessages.length > 1) {
+        console.log(`\n📦 Combining ${allBufferedMessages.length} messages from ${message.author.username}:`);
+        allBufferedMessages.forEach((msg, i) => {
+            console.log(`   ${i + 1}. "${msg.content.substring(0, 50)}${msg.content.length > 50 ? '...' : ''}"`);
+        });
+    }
+
+    // SELF-INTERRUPTION LOCK: Prevent parallel responses to same user
     let lockData = userProcessingLock.get(userId);
 
     if (!lockData) {
@@ -2904,13 +3000,61 @@ client.on('messageCreate', async (message) => {
             }
             
             stopTyping = await startTyping(message.channel);
-            
-            let userMessage = message.content.replace(`<@${client.user.id}>`, '').trim();
-            
-            // Replace Discord mentions with readable names
-            userMessage = await replaceDiscordMentions(userMessage, message);
-            
-            console.log(`💬 ${userName} [Trust: ${userProfile.trust_level}/10]: ${userMessage}`);
+
+            // Combine all buffered messages into one
+            let userMessage = '';
+            if (allBufferedMessages.length > 1) {
+                // Multiple messages - combine them
+                const combinedMessages = [];
+                for (const msg of allBufferedMessages) {
+                    let msgContent = msg.content.replace(`<@${client.user.id}>`, '').trim();
+                    msgContent = await replaceDiscordMentions(msgContent, msg);
+                    combinedMessages.push(msgContent);
+                }
+                userMessage = combinedMessages.join('\n');
+                console.log(`💬 ${userName} [Trust: ${userProfile.trust_level}/10] (${allBufferedMessages.length} messages combined):`);
+                console.log(`   ${userMessage.substring(0, 200)}${userMessage.length > 200 ? '...' : ''}`);
+            } else {
+                // Single message
+                userMessage = message.content.replace(`<@${client.user.id}>`, '').trim();
+                // Replace Discord mentions with readable names
+                userMessage = await replaceDiscordMentions(userMessage, message);
+                console.log(`💬 ${userName} [Trust: ${userProfile.trust_level}/10]: ${userMessage}`);
+            }
+
+            // Check if this message is a reply to another message
+            let replyContext = '';
+            if (message.reference && message.reference.messageId) {
+                try {
+                    const repliedTo = await message.channel.messages.fetch(message.reference.messageId);
+                    if (repliedTo) {
+                        const repliedAuthor = repliedTo.author.id === client.user.id
+                            ? 'you (Misuki)'
+                            : (repliedTo.author.id === MAIN_USER_ID
+                                ? 'Dan'
+                                : repliedTo.author.username);
+
+                        let repliedContent = repliedTo.content.replace(`<@${client.user.id}>`, '').trim();
+                        repliedContent = await replaceDiscordMentions(repliedContent, repliedTo);
+
+                        // Truncate if too long
+                        if (repliedContent.length > 100) {
+                            repliedContent = repliedContent.substring(0, 100) + '...';
+                        }
+
+                        replyContext = `\n[${userName} is replying to ${repliedAuthor}'s message: "${repliedContent}"]\n`;
+                        console.log(`   🔗 Reply context: ${userName} → ${repliedAuthor}`);
+                    }
+                } catch (error) {
+                    // Couldn't fetch the replied message, that's okay
+                    console.log(`   ⚠️  Couldn't fetch replied message: ${error.message}`);
+                }
+            }
+
+            // Add reply context to the user message if it exists
+            if (replyContext) {
+                userMessage = replyContext + userMessage;
+            }
             
             const currentActivity = getMisukiCurrentActivity();
             console.log(`📅 Current activity: ${currentActivity.activity} ${currentActivity.emoji}`);
@@ -3249,7 +3393,7 @@ client.on('messageCreate', async (message) => {
             }
         }
     }
-});
+}
 
 // ============================================
 // TYPING INDICATOR TRACKING

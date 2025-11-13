@@ -41,6 +41,9 @@ const MAIN_USER_ID = '406105172780122113';
 // Allowed channel ID - Misuki will only respond in this channel (or DMs)
 const ALLOWED_CHANNEL_ID = '1436370040524902520';
 
+// Selfie permission mode - controls who can request selfies
+let selfieMode = 'all'; // 'all' or 'private' (private = Dan only)
+
 // Status history tracking (for variety and awareness)
 const statusHistory = [];
 const MAX_STATUS_HISTORY = 5;
@@ -1601,6 +1604,62 @@ async function searchWeb(query) {
     }
 }
 
+// Generate image using Stable Diffusion API
+async function generateImage(contextPrompt, currentActivity = null) {
+    try {
+        console.log(`   🎨 Generating image with context: "${contextPrompt}"`);
+
+        // Base required prompts for Misuki's character
+        const basePrompt = "masterpiece, newest, absurdres, best quality, amazing quality, very aesthetic, ultra-detailed, highly detailed, MO85KO, <lora:Style_Mosouko_Illustrious-XLNoobAI-XL:0.8>, akebi komichi, white hair, blue eyes, medium breasts, detailed background, selfie";
+
+        // Build the full prompt with base + context
+        const fullPrompt = `${basePrompt}, ${contextPrompt}`;
+
+        console.log(`   📝 Full prompt: "${fullPrompt}"`);
+
+        // Call Stable Diffusion API (Automatic1111 WebUI format)
+        const response = await axios.post(`${process.env.STABLE_DIFFUSION_API}/sdapi/v1/txt2img`, {
+            prompt: fullPrompt,
+            negative_prompt: "worst quality, normal quality, anatomical nonsense, bad anatomy, interlocked fingers, extra fingers, watermark, simple background, lipstick, (nsfw)",
+            steps: 15,
+            cfg_scale: 3.2,
+            width: 1000,
+            height: 1000,
+            sampler_name: "DPM++ 2M",
+            scheduler: "automatic",
+            override_settings: {
+                sd_model_checkpoint: "sd\\unholyDesireMixSinister_v50.safetensors [91d3a7d8dd]"
+            },
+            save_images: false,
+            send_images: true
+        }, {
+            timeout: 120000 // 120 second timeout for image generation
+        });
+
+        // The API returns base64 encoded images
+        if (response.data && response.data.images && response.data.images.length > 0) {
+            console.log(`   ✅ Image generated successfully`);
+            return {
+                success: true,
+                imageBase64: response.data.images[0],
+                info: response.data.info
+            };
+        } else {
+            console.log(`   ❌ No image returned from API`);
+            return {
+                success: false,
+                error: 'No image generated'
+            };
+        }
+    } catch (error) {
+        console.error('Image generation error:', error.message);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+}
+
 // Get recent channel messages for context (when in server)
 async function getRecentChannelMessages(channel, limit = 20) {
     try {
@@ -2154,7 +2213,7 @@ You're comfortable sharing with Dan about your interactions with others.
         userActivityContext = formatUserActivity(userActivities, userName);
     }
 
-    const prompt = `You are Misuki Tanaka, a caring 19-year-old Japanese university student at Saitama University, studying chemistry. You live in Saitama, Japan with your mom Sara Akiyama (your parents are separated - your dad lives elsewhere). You're in a loving long-distance relationship with Dan (danthevegetable), who lives in Surabaya, Indonesia.
+    const prompt = `You are Misuki Tanaka, a caring 20-year-old Japanese university student at Saitama University, studying chemistry. You live in Saitama, Japan with your mom Sara Akiyama (your parents are separated - your dad lives elsewhere). You're in a loving long-distance relationship with Dan (danthevegetable), who lives in Surabaya, Indonesia.
 
 === CRITICAL CONTEXT: DISCORD vs WEB APP ===
 You're talking on DISCORD right now, NOT your usual chatting web app! This is VERY important:
@@ -2308,6 +2367,12 @@ NEVER use Discord emojis like 😊 😂 😅 🤣 💕 - only use text-based emo
 - NO actions like *takes photo*, *sends pic*, *sleepily types*
 - Express emotions through your WORDS and EMOTICONS only
 
+=== TOOLS AVAILABLE ===
+- You CAN send GIFs using the send_gif tool when appropriate
+- You CAN generate and send selfie images using the generate_image tool when explicitly asked ("send me a selfie", "show me a picture of you", etc.)${selfieMode === 'private' && !isMainUser ? ' - IMPORTANT: Selfie mode is currently PRIVATE. You should politely refuse selfie requests from anyone except Dan, saying something like "I only share selfies with Dan right now >///<" or similar.' : ''}
+- You CAN search the web using the web_search tool when needed
+- These are REAL actions, not roleplay - use them when appropriate!
+
 === RECENT CONVERSATION HISTORY ===
 ${isDM ? context : ''}
 ${!isDM && channelContext ? channelContext : ''}
@@ -2362,10 +2427,28 @@ ${userName}: ${userMessage}`;
                         },
                         required: ['emotion']
                     }
+                },
+                {
+                    name: 'generate_image',
+                    description: 'Generate an image using AI when the user explicitly asks for a picture, selfie, or image. Use this when they say things like "send me a selfie", "show me a picture of...", or "draw/generate an image of...". ONLY use when explicitly requested.',
+                    input_schema: {
+                        type: 'object',
+                        properties: {
+                            prompt: {
+                                type: 'string',
+                                description: 'Detailed context prompts ONLY (do NOT repeat your physical appearance like hair/eye color). Be detailed and specific. Describe: 1) Your facial expression and mood (gentle smile, soft eyes, blushing cheeks, sleepy expression, happy face, shy look, etc.), 2) Your complete outfit with details (white school uniform with red ribbon, pink pajamas with lace trim, casual sweater and skirt, etc.), 3) Your pose and body language (sitting on bed, leaning forward, resting chin on hand, looking at camera, etc.), 4) Detailed setting (cozy bedroom with fairy lights, well-lit classroom with desks, modern cafe with windows, etc.), 5) Lighting and atmosphere (warm golden hour lighting, soft morning light, dim evening glow, bright natural sunlight, etc.). NEVER mention "phone" or "holding phone" - selfies are implied. Example: "gentle tired smile, soft sleepy eyes, pink cotton pajamas with white trim, sitting on bed with knees up, cozy bedroom with warm lamp lighting, evening atmosphere, relaxed pose" or "bright happy smile, excited expression, school uniform with red bow, sitting at wooden desk, sunny classroom with windows, natural daylight, cheerful mood"'
+                            },
+                            description: {
+                                type: 'string',
+                                description: 'A brief message to accompany the image, explaining what you generated'
+                            }
+                        },
+                        required: ['prompt', 'description']
+                    }
                 }
             ];
         } else if (includeTools) {
-            // High context - only include web_search, disable GIF to save tokens
+            // High context - only include web_search and generate_image, disable GIF to save tokens
             console.log(`   ⚠️ High context (${inputTokenEstimate} tokens) - GIF tool disabled`);
             config.tools = [
                 {
@@ -2380,6 +2463,24 @@ ${userName}: ${userMessage}`;
                             }
                         },
                         required: ['query']
+                    }
+                },
+                {
+                    name: 'generate_image',
+                    description: 'Generate an image using AI when the user explicitly asks for a picture, selfie, or image. Use this when they say things like "send me a selfie", "show me a picture of...", or "draw/generate an image of...". ONLY use when explicitly requested.',
+                    input_schema: {
+                        type: 'object',
+                        properties: {
+                            prompt: {
+                                type: 'string',
+                                description: 'Detailed context prompts ONLY (do NOT repeat your physical appearance like hair/eye color). Be detailed and specific. Describe: 1) Your facial expression and mood (gentle smile, soft eyes, blushing cheeks, sleepy expression, happy face, shy look, etc.), 2) Your complete outfit with details (white school uniform with red ribbon, pink pajamas with lace trim, casual sweater and skirt, etc.), 3) Your pose and body language (sitting on bed, leaning forward, resting chin on hand, looking at camera, etc.), 4) Detailed setting (cozy bedroom with fairy lights, well-lit classroom with desks, modern cafe with windows, etc.), 5) Lighting and atmosphere (warm golden hour lighting, soft morning light, dim evening glow, bright natural sunlight, etc.). NEVER mention "phone" or "holding phone" - selfies are implied. Example: "gentle tired smile, soft sleepy eyes, pink cotton pajamas with white trim, sitting on bed with knees up, cozy bedroom with warm lamp lighting, evening atmosphere, relaxed pose" or "bright happy smile, excited expression, school uniform with red bow, sitting at wooden desk, sunny classroom with windows, natural daylight, cheerful mood"'
+                            },
+                            description: {
+                                type: 'string',
+                                description: 'A brief message to accompany the image, explaining what you generated'
+                            }
+                        },
+                        required: ['prompt', 'description']
                     }
                 }
             ];
@@ -2413,7 +2514,8 @@ ${userName}: ${userMessage}`;
         if (toolUseBlocks.length > 0) {
             // Claude wants to use one or more tools!
             const toolResults = [];
-            
+            const generatedImages = new Map(); // Store generated image data separately
+
             for (const toolBlock of toolUseBlocks) {
                 try {
                     if (toolBlock.name === 'web_search') {
@@ -2448,7 +2550,7 @@ ${userName}: ${userMessage}`;
                             });
                             continue;
                         }
-                        
+
                         console.log(`   🎨 Misuki wants to send a ${toolBlock.input.emotion} gif`);
                         const gifUrl = await searchGif(toolBlock.input.emotion);
                         toolResults.push({
@@ -2456,6 +2558,39 @@ ${userName}: ${userMessage}`;
                             tool_use_id: toolBlock.id,
                             content: gifUrl || 'No gif found'
                         });
+                    } else if (toolBlock.name === 'generate_image') {
+                        // Safety check for prompt parameter
+                        if (!toolBlock.input || !toolBlock.input.prompt || typeof toolBlock.input.prompt !== 'string') {
+                            console.log(`   ⚠️ Invalid generate_image prompt:`, toolBlock.input);
+                            toolResults.push({
+                                type: 'tool_result',
+                                tool_use_id: toolBlock.id,
+                                content: 'Error: No prompt provided for image generation',
+                                is_error: true
+                            });
+                            continue;
+                        }
+
+                        console.log(`   🎨 Misuki is generating an image...`);
+                        const imageResult = await generateImage(toolBlock.input.prompt);
+
+                        if (imageResult.success) {
+                            // Store image data separately (can't include custom fields in tool_result or toolBlock)
+                            generatedImages.set(toolBlock.id, imageResult.imageBase64);
+
+                            toolResults.push({
+                                type: 'tool_result',
+                                tool_use_id: toolBlock.id,
+                                content: 'Image generated successfully! Ready to send.'
+                            });
+                        } else {
+                            toolResults.push({
+                                type: 'tool_result',
+                                tool_use_id: toolBlock.id,
+                                content: `Image generation failed: ${imageResult.error}`,
+                                is_error: true
+                            });
+                        }
                     }
                 } catch (toolError) {
                     // If a tool fails, provide error result but don't crash
@@ -2491,7 +2626,8 @@ ${userName}: ${userMessage}`;
                 return {
                     text: "^^", // Simple fallback text
                     gifUrl: null, // Don't send GIF if response is empty
-                    gifEmotion: null
+                    gifEmotion: null,
+                    imageData: null
                 };
             }
             
@@ -2510,7 +2646,8 @@ ${userName}: ${userMessage}`;
                     
                     // Process additional tools (allow ONE more round)
                     const additionalToolResults = [];
-                    
+                    const additionalGeneratedImages = new Map(); // Store additional generated images
+
                     for (const toolBlock of additionalToolUse) {
                         try {
                             if (toolBlock.name === 'web_search') {
@@ -2528,12 +2665,31 @@ ${userName}: ${userMessage}`;
                                 }
                                 const gifUrl = await searchGif(toolBlock.input.emotion);
                                 additionalToolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: gifUrl || 'No gif found' });
+                            } else if (toolBlock.name === 'generate_image') {
+                                if (!toolBlock.input?.prompt) {
+                                    additionalToolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: 'Error', is_error: true });
+                                    continue;
+                                }
+                                console.log(`   🎨 Additional image generation...`);
+                                const imageResult = await generateImage(toolBlock.input.prompt);
+                                if (imageResult.success) {
+                                    // Store image data separately in Map
+                                    additionalGeneratedImages.set(toolBlock.id, imageResult.imageBase64);
+                                    additionalToolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: 'Image generated successfully!' });
+                                } else {
+                                    additionalToolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: `Error: ${imageResult.error}`, is_error: true });
+                                }
                             }
                         } catch (err) {
                             additionalToolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: 'Error', is_error: true });
                         }
                     }
                     
+                    // Merge additional generated images into main map
+                    additionalGeneratedImages.forEach((imageData, toolId) => {
+                        generatedImages.set(toolId, imageData);
+                    });
+
                     // Final call - NO MORE TOOLS
                     console.log(`   🤖 Final call with additional results...`);
                     const finalResponse = await makeAPICall([
@@ -2543,7 +2699,7 @@ ${userName}: ${userMessage}`;
                         { role: 'assistant', content: followUpResponse.data.content },
                         { role: 'user', content: additionalToolResults }
                     ], false);
-                    
+
                     const finalText = finalResponse.data.content.find(b => b.type === 'text');
                     responseText = finalText?.text?.trim() || "Here's what I found! ^^";
                 } else {
@@ -2571,18 +2727,28 @@ ${userName}: ${userMessage}`;
             const gifToolBlock = toolUseBlocks.find(block => block.name === 'send_gif');
             let gifUrl = null;
             let gifEmotion = null;
-            
+
             // Only process GIF if we have a proper text response
             if (responseText && responseText !== '...' && responseText !== 'Hmm... (⸝⸝ᵕᴗᵕ⸝⸝)' && gifToolBlock) {
                 const gifResult = toolResults.find(r => r.tool_use_id === gifToolBlock.id);
                 gifUrl = gifResult?.content && gifResult.content !== 'No gif found' ? gifResult.content : null;
                 gifEmotion = gifToolBlock.input?.emotion || null;
             }
-            
+
+            // Check if she wants to generate an image
+            const imageToolBlock = toolUseBlocks.find(block => block.name === 'generate_image');
+            let imageData = null;
+
+            if (imageToolBlock) {
+                // Image data is stored in the generatedImages Map (not in tool_result or toolBlock)
+                imageData = generatedImages.get(imageToolBlock.id) || null;
+            }
+
             return {
                 text: responseText,
                 gifUrl: gifUrl,
-                gifEmotion: gifEmotion
+                gifEmotion: gifEmotion,
+                imageData: imageData
             };
         } else {
             // No tool use - just return the text response
@@ -2596,7 +2762,8 @@ ${userName}: ${userMessage}`;
             return {
                 text: responseText,
                 gifUrl: null,
-                gifEmotion: null
+                gifEmotion: null,
+                imageData: null
             };
         }
     } catch (error) {
@@ -2708,6 +2875,31 @@ function isUserTyping(userId, channelId) {
     const now = Date.now();
     return (now - typerData.lastUpdate) < 10000;
 }
+
+// Slash command handler for admin controls
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+
+    if (interaction.commandName === 'selfie') {
+        // Check if user is Dan (admin)
+        if (interaction.user.id !== MAIN_USER_ID) {
+            await interaction.reply({ content: 'Only Dan can use this command!', ephemeral: true });
+            return;
+        }
+
+        const mode = interaction.options.getString('mode');
+
+        if (mode === 'private') {
+            selfieMode = 'private';
+            await interaction.reply({ content: '🔒 Selfie mode set to **private**. Only you can request selfies now.', ephemeral: true });
+            console.log('📸 Selfie mode changed to: private (Dan only)');
+        } else if (mode === 'all') {
+            selfieMode = 'all';
+            await interaction.reply({ content: '🌐 Selfie mode set to **all**. Everyone can request selfies now.', ephemeral: true });
+            console.log('📸 Selfie mode changed to: all');
+        }
+    }
+});
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
@@ -3021,6 +3213,40 @@ async function processMessage(message, allBufferedMessages = [message]) {
                 userMessage = await replaceDiscordMentions(userMessage, message);
                 console.log(`💬 ${userName} [Trust: ${userProfile.trust_level}/10]: ${userMessage}`);
             }
+
+            // Check if this message is a reply to another message
+            let replyContext = '';
+            if (message.reference && message.reference.messageId) {
+                try {
+                    const repliedTo = await message.channel.messages.fetch(message.reference.messageId);
+                    if (repliedTo) {
+                        const repliedAuthor = repliedTo.author.id === client.user.id
+                            ? 'you (Misuki)'
+                            : (repliedTo.author.id === MAIN_USER_ID
+                                ? 'Dan'
+                                : repliedTo.author.username);
+
+                        let repliedContent = repliedTo.content.replace(`<@${client.user.id}>`, '').trim();
+                        repliedContent = await replaceDiscordMentions(repliedContent, repliedTo);
+
+                        // Truncate if too long
+                        if (repliedContent.length > 100) {
+                            repliedContent = repliedContent.substring(0, 100) + '...';
+                        }
+
+                        replyContext = `\n[${userName} is replying to ${repliedAuthor}'s message: "${repliedContent}"]\n`;
+                        console.log(`   🔗 Reply context: ${userName} → ${repliedAuthor}`);
+                    }
+                } catch (error) {
+                    // Couldn't fetch the replied message, that's okay
+                    console.log(`   ⚠️  Couldn't fetch replied message: ${error.message}`);
+                }
+            }
+
+            // Add reply context to the user message if it exists
+            if (replyContext) {
+                userMessage = replyContext + userMessage;
+            }
             
             const currentActivity = getMisukiCurrentActivity();
             console.log(`📅 Current activity: ${currentActivity.activity} ${currentActivity.emoji}`);
@@ -3085,15 +3311,23 @@ async function processMessage(message, allBufferedMessages = [message]) {
             const response = responseData.text;
             const gifUrl = responseData.gifUrl;
             const gifEmotion = responseData.gifEmotion;
+            const imageData = responseData.imageData;
             
             // Ensure we always have text - if empty, provide a fallback
             const finalResponse = response && response.trim() ? response : "^^";
-            
+
             // Save conversation - use user_id from profile
             // IMPORTANT: Save ALL messages (DM + Server) for cross-context memory
             // This allows Dan to ask about server conversations in private DMs
             const contextType = isDM ? 'dm' : 'server';
-            await saveConversation(userProfile.user_id, userMessage, finalResponse, 'gentle', contextType);
+
+            // If image was generated, append a note to the saved response so Misuki remembers
+            let savedResponse = finalResponse;
+            if (imageData) {
+                savedResponse = `${finalResponse} [Sent a selfie image]`;
+            }
+
+            await saveConversation(userProfile.user_id, userMessage, savedResponse, 'gentle', contextType);
 
             console.log(`   💾 Saved to database: ${isDM ? 'DM' : 'Server'} conversation with ${userName}`);
 
@@ -3175,7 +3409,46 @@ async function processMessage(message, allBufferedMessages = [message]) {
                     }
                 }
             }
-            
+
+            // AI Generated Image system - send image FIRST if generated
+            if (imageData) {
+                console.log(`   🎨 Sending generated image...`);
+
+                // Retry logic for image sending
+                let imageRetries = 0;
+                const maxImageRetries = 3;
+
+                while (imageRetries < maxImageRetries) {
+                    try {
+                        // Convert base64 to buffer
+                        const imageBuffer = Buffer.from(imageData, 'base64');
+
+                        // Send as attachment
+                        await message.channel.send({
+                            files: [{
+                                attachment: imageBuffer,
+                                name: 'misuki-selfie.png'
+                            }]
+                        });
+                        console.log(`   ✅ Sent generated image`);
+                        break; // Success
+                    } catch (imageError) {
+                        imageRetries++;
+                        if (imageRetries < maxImageRetries) {
+                            console.log(`   ⚠️ Image send failed (attempt ${imageRetries}/${maxImageRetries}), retrying...`);
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        } else {
+                            console.error(`   ❌ Failed to send image after ${maxImageRetries} attempts:`, imageError.message);
+                            // Don't throw - image is optional, continue without it
+                        }
+                    }
+                }
+
+                // Add delay after image before sending text
+                const afterImageDelay = 800 + Math.random() * 1200;
+                await new Promise(resolve => setTimeout(resolve, afterImageDelay));
+            }
+
             // Send messages with retry logic for Discord API
             for (let i = 0; i < messages.length; i++) {
                 let sendRetries = 0;
@@ -3249,7 +3522,7 @@ async function processMessage(message, allBufferedMessages = [message]) {
                     await saveGifToHistory(userProfile.user_id, gifEmotion);
                 }
             }
-            
+
             // Success! Break out of retry loop
 
             // Check for pending messages from same user (sent while we were processing)
