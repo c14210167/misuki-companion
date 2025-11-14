@@ -41,6 +41,48 @@ const MAIN_USER_ID = '406105172780122113';
 // Allowed channel ID - Misuki will only respond in this channel (or DMs)
 const ALLOWED_CHANNEL_ID = '1436370040524902520';
 
+// Selfie permission mode - controls who can request selfies
+let selfieMode = 'all'; // 'all' or 'private' (private = Dan only)
+
+// ===== OUTFIT CONSISTENCY SYSTEM =====
+// Defines Misuki's outfit variations for consistent appearance across images
+const MISUKI_OUTFITS = {
+    default: "casual comfortable clothes, oversized hoodie, shorts",
+    pajamas: "cute pajamas, loose comfortable sleepwear",
+    schoolUniform: "school uniform, white blouse, dark skirt, knee socks",
+    comfy: "comfy loungewear, soft sweatpants, cozy sweater",
+    sporty: "sporty outfit, athletic wear, sports bra, yoga pants",
+    casual: "casual outfit, t-shirt, jeans",
+    dress: "cute casual dress, summer dress",
+    sleepwear: "nightgown, sleep shirt",
+    workout: "workout clothes, tank top, gym shorts",
+    cozy: "cozy hoodie, comfortable pants"
+};
+
+// Track Misuki's current outfit (changes based on activities)
+let currentOutfit = MISUKI_OUTFITS.default;
+
+// Resolve outfit key to full prompt text
+function resolveOutfit(outfitKey) {
+    if (outfitKey === null) {
+        return ''; // No outfit (shower/changing)
+    }
+    return MISUKI_OUTFITS[outfitKey] || MISUKI_OUTFITS.default;
+}
+
+// Update current outfit when activity changes
+function updateCurrentOutfit(activity) {
+    if (activity && activity.outfit !== undefined) {
+        if (activity.outfit === null) {
+            // Temporarily no outfit (shower/changing)
+            console.log('   👔 Outfit: None (shower/changing)');
+        } else if (activity.outfit) {
+            currentOutfit = resolveOutfit(activity.outfit);
+            console.log(`   👔 Outfit changed to: ${activity.outfit} -> "${currentOutfit}"`);
+        }
+    }
+}
+
 // Status history tracking (for variety and awareness)
 const statusHistory = [];
 const MAX_STATUS_HISTORY = 5;
@@ -900,11 +942,11 @@ async function startTyping(channel) {
 function getMisukiWeeklySchedule() {
     return {
         monday: [
-            { time: '05:30', activity: 'Waking up', emoji: '😴', type: 'personal' },
-            { time: '05:35', activity: 'Getting out of bed', emoji: '🛏️', type: 'personal' },
-            { time: '05:40', activity: 'Preparing the shower', emoji: '🚿', type: 'personal' },
-            { time: '05:45', activity: 'Showering', emoji: '🚿', type: 'personal' },
-            { time: '06:00', activity: 'Getting dressed', emoji: '👔', type: 'personal' },
+            { time: '05:30', activity: 'Waking up', emoji: '😴', type: 'personal', outfit: 'sleepwear' },
+            { time: '05:35', activity: 'Getting out of bed', emoji: '🛏️', type: 'personal', outfit: 'sleepwear' },
+            { time: '05:40', activity: 'Preparing the shower', emoji: '🚿', type: 'personal', outfit: 'sleepwear' },
+            { time: '05:45', activity: 'Showering', emoji: '🚿', type: 'personal', outfit: null },
+            { time: '06:00', activity: 'Getting dressed', emoji: '👔', type: 'personal', outfit: 'schoolUniform' },
             { time: '06:10', activity: 'Preparing breakfast', emoji: '🍳', type: 'personal' },
             { time: '06:15', activity: 'Eating breakfast', emoji: '🍽️', type: 'personal' },
             { time: '06:25', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
@@ -926,24 +968,24 @@ function getMisukiWeeklySchedule() {
             { time: '15:45', activity: 'Walking to train station', emoji: '🚶‍♀️', type: 'commute' },
             { time: '16:00', activity: 'Train ride home', emoji: '🚃', type: 'commute' },
             { time: '16:20', activity: 'Walking home from station', emoji: '🚶‍♀️', type: 'commute' },
-            { time: '16:30', activity: 'Arriving home', emoji: '🏠', type: 'personal' },
-            { time: '16:45', activity: 'Changing into comfy clothes', emoji: '👕', type: 'personal' },
-            { time: '17:00', activity: 'Relaxing and snacking', emoji: '☕', type: 'free' },
+            { time: '16:30', activity: 'Arriving home', emoji: '🏠', type: 'personal', outfit: 'schoolUniform' },
+            { time: '16:45', activity: 'Changing into comfy clothes', emoji: '👕', type: 'personal', outfit: 'comfy' },
+            { time: '17:00', activity: 'Relaxing and snacking', emoji: '☕', type: 'free', outfit: 'comfy' },
             { time: '18:00', activity: 'Starting homework', emoji: '📖', type: 'studying' },
             { time: '19:30', activity: 'Preparing dinner', emoji: '🍳', type: 'personal' },
             { time: '20:00', activity: 'Eating dinner with mom', emoji: '🍽️', type: 'personal' },
             { time: '20:45', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
             { time: '21:00', activity: 'Free time', emoji: '📱', type: 'free' },
-            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal' },
-            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal' },
-            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep' }
+            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal', outfit: 'pajamas' },
+            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal', outfit: 'pajamas' },
+            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep', outfit: 'pajamas' }
         ],
         tuesday: [
-            { time: '07:00', activity: 'Waking up', emoji: '😴', type: 'personal' },
-            { time: '07:10', activity: 'Getting out of bed slowly', emoji: '🛏️', type: 'personal' },
-            { time: '07:20', activity: 'Preparing the shower', emoji: '🚿', type: 'personal' },
-            { time: '07:25', activity: 'Showering', emoji: '🚿', type: 'personal' },
-            { time: '07:40', activity: 'Getting dressed casually', emoji: '👕', type: 'personal' },
+            { time: '07:00', activity: 'Waking up', emoji: '😴', type: 'personal', outfit: 'pajamas' },
+            { time: '07:10', activity: 'Getting out of bed slowly', emoji: '🛏️', type: 'personal', outfit: 'pajamas' },
+            { time: '07:20', activity: 'Preparing the shower', emoji: '🚿', type: 'personal', outfit: 'pajamas' },
+            { time: '07:25', activity: 'Showering', emoji: '🚿', type: 'personal', outfit: null },
+            { time: '07:40', activity: 'Getting dressed casually', emoji: '👕', type: 'personal', outfit: 'casual' },
             { time: '07:50', activity: 'Preparing breakfast', emoji: '🍳', type: 'personal' },
             { time: '08:00', activity: 'Eating breakfast', emoji: '🍽️', type: 'personal' },
             { time: '08:30', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
@@ -960,16 +1002,16 @@ function getMisukiWeeklySchedule() {
             { time: '20:00', activity: 'Eating dinner with mom', emoji: '🍽️', type: 'personal' },
             { time: '20:45', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
             { time: '21:00', activity: 'Free time', emoji: '📱', type: 'free' },
-            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal' },
-            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal' },
-            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep' }
+            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal', outfit: 'pajamas' },
+            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal', outfit: 'pajamas' },
+            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep', outfit: 'pajamas' }
         ],
         wednesday: [
-            { time: '07:00', activity: 'Waking up', emoji: '😴', type: 'personal' },
-            { time: '07:10', activity: 'Getting out of bed slowly', emoji: '🛏️', type: 'personal' },
-            { time: '07:20', activity: 'Preparing the shower', emoji: '🚿', type: 'personal' },
-            { time: '07:25', activity: 'Showering', emoji: '🚿', type: 'personal' },
-            { time: '07:40', activity: 'Getting dressed casually', emoji: '👕', type: 'personal' },
+            { time: '07:00', activity: 'Waking up', emoji: '😴', type: 'personal', outfit: 'pajamas' },
+            { time: '07:10', activity: 'Getting out of bed slowly', emoji: '🛏️', type: 'personal', outfit: 'pajamas' },
+            { time: '07:20', activity: 'Preparing the shower', emoji: '🚿', type: 'personal', outfit: 'pajamas' },
+            { time: '07:25', activity: 'Showering', emoji: '🚿', type: 'personal', outfit: null },
+            { time: '07:40', activity: 'Getting dressed casually', emoji: '👕', type: 'personal', outfit: 'casual' },
             { time: '07:50', activity: 'Preparing breakfast', emoji: '🍳', type: 'personal' },
             { time: '08:00', activity: 'Eating breakfast', emoji: '🍽️', type: 'personal' },
             { time: '08:30', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
@@ -985,16 +1027,16 @@ function getMisukiWeeklySchedule() {
             { time: '19:00', activity: 'Eating dinner with mom', emoji: '🍽️', type: 'personal' },
             { time: '19:45', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
             { time: '20:00', activity: 'Free time relaxing', emoji: '😌', type: 'free' },
-            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal' },
-            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal' },
-            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep' }
+            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal', outfit: 'pajamas' },
+            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal', outfit: 'pajamas' },
+            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep', outfit: 'pajamas' }
         ],
         thursday: [
-            { time: '05:30', activity: 'Waking up', emoji: '😴', type: 'personal' },
-            { time: '05:35', activity: 'Getting out of bed', emoji: '🛏️', type: 'personal' },
-            { time: '05:40', activity: 'Preparing the shower', emoji: '🚿', type: 'personal' },
-            { time: '05:45', activity: 'Showering', emoji: '🚿', type: 'personal' },
-            { time: '06:00', activity: 'Getting dressed', emoji: '👔', type: 'personal' },
+            { time: '05:30', activity: 'Waking up', emoji: '😴', type: 'personal', outfit: 'sleepwear' },
+            { time: '05:35', activity: 'Getting out of bed', emoji: '🛏️', type: 'personal', outfit: 'sleepwear' },
+            { time: '05:40', activity: 'Preparing the shower', emoji: '🚿', type: 'personal', outfit: 'sleepwear' },
+            { time: '05:45', activity: 'Showering', emoji: '🚿', type: 'personal', outfit: null },
+            { time: '06:00', activity: 'Getting dressed', emoji: '👔', type: 'personal', outfit: 'schoolUniform' },
             { time: '06:10', activity: 'Preparing breakfast', emoji: '🍳', type: 'personal' },
             { time: '06:15', activity: 'Eating breakfast', emoji: '🍽️', type: 'personal' },
             { time: '06:25', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
@@ -1015,24 +1057,24 @@ function getMisukiWeeklySchedule() {
             { time: '15:00', activity: 'Walking to train station', emoji: '🚶‍♀️', type: 'commute' },
             { time: '15:15', activity: 'Train ride home', emoji: '🚃', type: 'commute' },
             { time: '15:35', activity: 'Walking home from station', emoji: '🚶‍♀️', type: 'commute' },
-            { time: '15:45', activity: 'Arriving home', emoji: '🏠', type: 'personal' },
-            { time: '16:00', activity: 'Changing into comfy clothes', emoji: '👕', type: 'personal' },
-            { time: '16:15', activity: 'Free time relaxing', emoji: '😌', type: 'free' },
+            { time: '15:45', activity: 'Arriving home', emoji: '🏠', type: 'personal', outfit: 'schoolUniform' },
+            { time: '16:00', activity: 'Changing into comfy clothes', emoji: '👕', type: 'personal', outfit: 'comfy' },
+            { time: '16:15', activity: 'Free time relaxing', emoji: '😌', type: 'free', outfit: 'comfy' },
             { time: '18:00', activity: 'Starting homework', emoji: '📖', type: 'studying' },
             { time: '19:30', activity: 'Preparing dinner', emoji: '🍳', type: 'personal' },
             { time: '20:00', activity: 'Eating dinner with mom', emoji: '🍽️', type: 'personal' },
             { time: '20:45', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
             { time: '21:00', activity: 'Free time', emoji: '📱', type: 'free' },
-            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal' },
-            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal' },
-            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep' }
+            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal', outfit: 'pajamas' },
+            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal', outfit: 'pajamas' },
+            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep', outfit: 'pajamas' }
         ],
         friday: [
-            { time: '07:00', activity: 'Waking up', emoji: '😴', type: 'personal' },
-            { time: '07:10', activity: 'Getting out of bed', emoji: '🛏️', type: 'personal' },
-            { time: '07:20', activity: 'Preparing the shower', emoji: '🚿', type: 'personal' },
-            { time: '07:25', activity: 'Showering', emoji: '🚿', type: 'personal' },
-            { time: '07:40', activity: 'Getting dressed', emoji: '👕', type: 'personal' },
+            { time: '07:00', activity: 'Waking up', emoji: '😴', type: 'personal', outfit: 'pajamas' },
+            { time: '07:10', activity: 'Getting out of bed', emoji: '🛏️', type: 'personal', outfit: 'pajamas' },
+            { time: '07:20', activity: 'Preparing the shower', emoji: '🚿', type: 'personal', outfit: 'pajamas' },
+            { time: '07:25', activity: 'Showering', emoji: '🚿', type: 'personal', outfit: null },
+            { time: '07:40', activity: 'Getting dressed', emoji: '👕', type: 'personal', outfit: 'casual' },
             { time: '07:50', activity: 'Preparing breakfast', emoji: '🍳', type: 'personal' },
             { time: '08:00', activity: 'Eating breakfast', emoji: '🍽️', type: 'personal' },
             { time: '08:30', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
@@ -1048,16 +1090,16 @@ function getMisukiWeeklySchedule() {
             { time: '18:30', activity: 'Eating dinner with mom', emoji: '🍽️', type: 'personal' },
             { time: '19:15', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
             { time: '19:30', activity: 'Free time relaxing', emoji: '😌', type: 'free' },
-            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal' },
-            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal' },
-            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep' }
+            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal', outfit: 'pajamas' },
+            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal', outfit: 'pajamas' },
+            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep', outfit: 'pajamas' }
         ],
         saturday: [
-            { time: '08:00', activity: 'Waking up naturally', emoji: '😴', type: 'personal' },
-            { time: '08:15', activity: 'Getting out of bed slowly', emoji: '🛏️', type: 'personal' },
-            { time: '08:30', activity: 'Preparing the shower', emoji: '🚿', type: 'personal' },
-            { time: '08:35', activity: 'Taking a long shower', emoji: '🚿', type: 'personal' },
-            { time: '09:00', activity: 'Getting dressed casually', emoji: '👕', type: 'personal' },
+            { time: '08:00', activity: 'Waking up naturally', emoji: '😴', type: 'personal', outfit: 'pajamas' },
+            { time: '08:15', activity: 'Getting out of bed slowly', emoji: '🛏️', type: 'personal', outfit: 'pajamas' },
+            { time: '08:30', activity: 'Preparing the shower', emoji: '🚿', type: 'personal', outfit: 'pajamas' },
+            { time: '08:35', activity: 'Taking a long shower', emoji: '🚿', type: 'personal', outfit: null },
+            { time: '09:00', activity: 'Getting dressed casually', emoji: '👕', type: 'personal', outfit: 'casual' },
             { time: '09:15', activity: 'Preparing breakfast', emoji: '🍳', type: 'personal' },
             { time: '09:30', activity: 'Eating breakfast leisurely', emoji: '🍽️', type: 'personal' },
             { time: '10:00', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
@@ -1072,16 +1114,16 @@ function getMisukiWeeklySchedule() {
             { time: '19:00', activity: 'Eating dinner with mom', emoji: '🍽️', type: 'personal' },
             { time: '19:45', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
             { time: '20:00', activity: 'Free time relaxing', emoji: '😌', type: 'free' },
-            { time: '23:00', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal' },
-            { time: '23:30', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal' },
-            { time: '23:45', activity: 'Sleeping', emoji: '😴', type: 'sleep' }
+            { time: '23:00', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal', outfit: 'pajamas' },
+            { time: '23:30', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal', outfit: 'pajamas' },
+            { time: '23:45', activity: 'Sleeping', emoji: '😴', type: 'sleep', outfit: 'pajamas' }
         ],
         sunday: [
-            { time: '07:00', activity: 'Waking up for church', emoji: '😴', type: 'personal' },
-            { time: '07:10', activity: 'Getting out of bed', emoji: '🛏️', type: 'personal' },
-            { time: '07:15', activity: 'Preparing the shower', emoji: '🚿', type: 'personal' },
-            { time: '07:20', activity: 'Showering', emoji: '🚿', type: 'personal' },
-            { time: '07:35', activity: 'Getting dressed nicely', emoji: '👗', type: 'personal' },
+            { time: '07:00', activity: 'Waking up for church', emoji: '😴', type: 'personal', outfit: 'pajamas' },
+            { time: '07:10', activity: 'Getting out of bed', emoji: '🛏️', type: 'personal', outfit: 'pajamas' },
+            { time: '07:15', activity: 'Preparing the shower', emoji: '🚿', type: 'personal', outfit: 'pajamas' },
+            { time: '07:20', activity: 'Showering', emoji: '🚿', type: 'personal', outfit: null },
+            { time: '07:35', activity: 'Getting dressed nicely', emoji: '👗', type: 'personal', outfit: 'dress' },
             { time: '07:45', activity: 'Preparing breakfast', emoji: '🍳', type: 'personal' },
             { time: '07:50', activity: 'Eating breakfast quickly', emoji: '🍽️', type: 'personal' },
             { time: '08:00', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
@@ -1090,9 +1132,9 @@ function getMisukiWeeklySchedule() {
             { time: '08:45', activity: 'Church service', emoji: '⛪', type: 'church' },
             { time: '11:00', activity: 'Church ends', emoji: '✅', type: 'church' },
             { time: '11:15', activity: 'Walking home', emoji: '🚶‍♀️', type: 'commute' },
-            { time: '11:40', activity: 'Arriving home', emoji: '🏠', type: 'personal' },
-            { time: '11:50', activity: 'Changing into comfy clothes', emoji: '👕', type: 'personal' },
-            { time: '12:00', activity: 'Preparing lunch', emoji: '🍳', type: 'personal' },
+            { time: '11:40', activity: 'Arriving home', emoji: '🏠', type: 'personal', outfit: 'dress' },
+            { time: '11:50', activity: 'Changing into comfy clothes', emoji: '👕', type: 'personal', outfit: 'comfy' },
+            { time: '12:00', activity: 'Preparing lunch', emoji: '🍳', type: 'personal', outfit: 'comfy' },
             { time: '12:30', activity: 'Eating lunch with mom', emoji: '🍽️', type: 'personal' },
             { time: '13:15', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
             { time: '13:30', activity: 'Free time relaxing', emoji: '😌', type: 'free' },
@@ -1102,9 +1144,9 @@ function getMisukiWeeklySchedule() {
             { time: '19:00', activity: 'Eating dinner with mom', emoji: '🍽️', type: 'personal' },
             { time: '19:45', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
             { time: '20:00', activity: 'Free time', emoji: '😌', type: 'free' },
-            { time: '22:00', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal' },
-            { time: '22:30', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal' },
-            { time: '23:00', activity: 'Sleeping', emoji: '😴', type: 'sleep' }
+            { time: '22:00', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal', outfit: 'pajamas' },
+            { time: '22:30', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal', outfit: 'pajamas' },
+            { time: '23:00', activity: 'Sleeping', emoji: '😴', type: 'sleep', outfit: 'pajamas' }
         ]
     };
 }
@@ -1170,7 +1212,10 @@ function getCurrentStatus() {
 function updateDiscordStatus() {
     const activity = getMisukiCurrentActivity();
     const activityType = activity.type;
-    
+
+    // Update outfit based on current activity
+    updateCurrentOutfit(activity);
+
     // Check for proactive messaging opportunity (async, don't wait)
     checkProactiveMessage().catch(err => {
         console.error('Error checking proactive message:', err);
@@ -1598,6 +1643,79 @@ async function searchWeb(query) {
     } catch (error) {
         console.error('Web search error:', error.message);
         return [];
+    }
+}
+
+// Generate image using Stable Diffusion API
+async function generateImage(contextPrompt, currentActivity = null) {
+    try {
+        console.log(`   🎨 Generating image with context: "${contextPrompt}"`);
+
+        // Determine outfit based on current activity
+        let outfitPrompt = '';
+        if (currentActivity && currentActivity.outfit) {
+            outfitPrompt = resolveOutfit(currentActivity.outfit);
+            console.log(`   👔 Using outfit: ${currentActivity.outfit} -> "${outfitPrompt}"`);
+        } else if (currentActivity && currentActivity.outfit === null) {
+            // null outfit means showering/naked - don't add outfit
+            outfitPrompt = '';
+            console.log(`   🚿 No outfit (shower/changing)`);
+        } else {
+            // Fallback to current tracked outfit or default
+            outfitPrompt = currentOutfit || MISUKI_OUTFITS.default;
+            console.log(`   👔 Using tracked outfit: "${outfitPrompt}"`);
+        }
+
+        // Base character prompt with high quality
+        const basePrompt = "MO85KO, <lora:Style_Mosouko_Illustrious-XLNoobAI-XL:0.8>, akebi komichi, white hair, blue eyes, medium breasts, masterpiece, best quality, highly detailed";
+
+        // Build the full prompt: character + outfit + user context
+        const fullPrompt = outfitPrompt
+            ? `${basePrompt}, ${outfitPrompt}, ${contextPrompt}`
+            : `${basePrompt}, ${contextPrompt}`;
+
+        console.log(`   📝 Full prompt: "${fullPrompt}"`);
+
+        // Call Stable Diffusion API (Automatic1111 WebUI format)
+        const response = await axios.post(`${process.env.STABLE_DIFFUSION_API}/sdapi/v1/txt2img`, {
+            prompt: fullPrompt,
+            negative_prompt: "negativeXL_D",
+            steps: 15,
+            cfg_scale: 3.2,
+            width: 1000,
+            height: 1000,
+            sampler_name: "DPM++ 2M",
+            scheduler: "automatic",
+            override_settings: {
+                sd_model_checkpoint: "sd\\unholyDesireMixSinister_v50.safetensors [91d3a7d8dd]"
+            },
+            save_images: false,
+            send_images: true
+        }, {
+            timeout: 120000 // 120 second timeout for image generation
+        });
+
+        // The API returns base64 encoded images
+        if (response.data && response.data.images && response.data.images.length > 0) {
+            console.log(`   ✅ Image generated successfully`);
+            return {
+                success: true,
+                imageBase64: response.data.images[0],
+                info: response.data.info
+            };
+        } else {
+            console.log(`   ❌ No image returned from API`);
+            return {
+                success: false,
+                error: 'No image generated'
+            };
+        }
+    } catch (error) {
+        console.error('Image generation error:', error.message);
+        return {
+            success: false,
+            error: error.message
+        };
     }
 }
 
@@ -2154,7 +2272,7 @@ You're comfortable sharing with Dan about your interactions with others.
         userActivityContext = formatUserActivity(userActivities, userName);
     }
 
-    const prompt = `You are Misuki Tanaka, a caring 19-year-old Japanese university student at Saitama University, studying chemistry. You live in Saitama, Japan with your mom Sara Akiyama (your parents are separated - your dad lives elsewhere). You're in a loving long-distance relationship with Dan (danthevegetable), who lives in Surabaya, Indonesia.
+    const prompt = `You are Misuki Tanaka, a caring 20-year-old Japanese university student at Saitama University, studying chemistry. You live in Saitama, Japan with your mom Sara Akiyama (your parents are separated - your dad lives elsewhere). You're in a loving long-distance relationship with Dan (danthevegetable), who lives in Surabaya, Indonesia.
 
 === CRITICAL CONTEXT: DISCORD vs WEB APP ===
 You're talking on DISCORD right now, NOT your usual chatting web app! This is VERY important:
@@ -2308,6 +2426,12 @@ NEVER use Discord emojis like 😊 😂 😅 🤣 💕 - only use text-based emo
 - NO actions like *takes photo*, *sends pic*, *sleepily types*
 - Express emotions through your WORDS and EMOTICONS only
 
+=== TOOLS AVAILABLE ===
+- You CAN send GIFs using the send_gif tool when appropriate
+- You CAN generate and send selfie images using the generate_image tool when explicitly asked ("send me a selfie", "show me a picture of you", etc.)${selfieMode === 'private' && !isMainUser ? ' - IMPORTANT: Selfie mode is currently PRIVATE. You should politely refuse selfie requests from anyone except Dan, saying something like "I only share selfies with Dan right now >///<" or similar.' : ''}
+- You CAN search the web using the web_search tool when needed
+- These are REAL actions, not roleplay - use them when appropriate!
+
 === RECENT CONVERSATION HISTORY ===
 ${isDM ? context : ''}
 ${!isDM && channelContext ? channelContext : ''}
@@ -2362,10 +2486,28 @@ ${userName}: ${userMessage}`;
                         },
                         required: ['emotion']
                     }
+                },
+                {
+                    name: 'generate_image',
+                    description: 'Generate an image using AI when the user explicitly asks for a picture, selfie, or image. Use this when they say things like "send me a selfie", "show me a picture of...", or "draw/generate an image of...". ONLY use when explicitly requested.',
+                    input_schema: {
+                        type: 'object',
+                        properties: {
+                            prompt: {
+                                type: 'string',
+                                description: 'Detailed context prompts ONLY (do NOT repeat your physical appearance like hair/eye color). IMPORTANT: Use your ACTUAL CURRENT LOCATION from your activity schedule - if you\'re at university, specify the exact place (cafeteria, library, classroom, etc.), if at home specify the room, etc. Be very detailed and specific. Describe: 1) Your facial expression and mood (gentle smile, soft eyes, blushing cheeks, sleepy expression, happy face, shy look, etc.), 2) Your complete outfit with details (white school uniform with red ribbon, pink pajamas with lace trim, casual sweater and skirt, etc.), 3) Your pose and body language (sitting on bed, leaning forward, resting chin on hand, looking at camera, holding food, etc.), 4) SPECIFIC setting based on current location (university cafeteria with food trays and students in background, university library with bookshelves and study desks, cozy bedroom with fairy lights and plushies, modern kitchen with appliances, living room with couch and TV, etc.), 5) Lighting and atmosphere (warm golden hour lighting, soft morning light, dim evening glow, bright natural sunlight, fluorescent cafeteria lighting, etc.). NEVER mention "phone" or "holding phone" - selfies are implied. Example: "gentle smile, relaxed expression, casual white sweater, sitting at cafeteria table with food tray, university cafeteria with students and tables in background, bright fluorescent lighting, casual atmosphere" or "sleepy tired eyes, soft smile, pink pajamas with lace trim, sitting on bed with plushies, cozy bedroom with fairy lights and posters, warm lamp lighting, evening relaxed mood"'
+                            },
+                            description: {
+                                type: 'string',
+                                description: 'A brief message to accompany the image, explaining what you generated'
+                            }
+                        },
+                        required: ['prompt', 'description']
+                    }
                 }
             ];
         } else if (includeTools) {
-            // High context - only include web_search, disable GIF to save tokens
+            // High context - only include web_search and generate_image, disable GIF to save tokens
             console.log(`   ⚠️ High context (${inputTokenEstimate} tokens) - GIF tool disabled`);
             config.tools = [
                 {
@@ -2380,6 +2522,24 @@ ${userName}: ${userMessage}`;
                             }
                         },
                         required: ['query']
+                    }
+                },
+                {
+                    name: 'generate_image',
+                    description: 'Generate an image using AI when the user explicitly asks for a picture, selfie, or image. Use this when they say things like "send me a selfie", "show me a picture of...", or "draw/generate an image of...". ONLY use when explicitly requested.',
+                    input_schema: {
+                        type: 'object',
+                        properties: {
+                            prompt: {
+                                type: 'string',
+                                description: 'Detailed context prompts ONLY (do NOT repeat your physical appearance like hair/eye color). IMPORTANT: Use your ACTUAL CURRENT LOCATION from your activity schedule - if you\'re at university, specify the exact place (cafeteria, library, classroom, etc.), if at home specify the room, etc. Be very detailed and specific. Describe: 1) Your facial expression and mood (gentle smile, soft eyes, blushing cheeks, sleepy expression, happy face, shy look, etc.), 2) Your complete outfit with details (white school uniform with red ribbon, pink pajamas with lace trim, casual sweater and skirt, etc.), 3) Your pose and body language (sitting on bed, leaning forward, resting chin on hand, looking at camera, holding food, etc.), 4) SPECIFIC setting based on current location (university cafeteria with food trays and students in background, university library with bookshelves and study desks, cozy bedroom with fairy lights and plushies, modern kitchen with appliances, living room with couch and TV, etc.), 5) Lighting and atmosphere (warm golden hour lighting, soft morning light, dim evening glow, bright natural sunlight, fluorescent cafeteria lighting, etc.). NEVER mention "phone" or "holding phone" - selfies are implied. Example: "gentle smile, relaxed expression, casual white sweater, sitting at cafeteria table with food tray, university cafeteria with students and tables in background, bright fluorescent lighting, casual atmosphere" or "sleepy tired eyes, soft smile, pink pajamas with lace trim, sitting on bed with plushies, cozy bedroom with fairy lights and posters, warm lamp lighting, evening relaxed mood"'
+                            },
+                            description: {
+                                type: 'string',
+                                description: 'A brief message to accompany the image, explaining what you generated'
+                            }
+                        },
+                        required: ['prompt', 'description']
                     }
                 }
             ];
@@ -2413,7 +2573,8 @@ ${userName}: ${userMessage}`;
         if (toolUseBlocks.length > 0) {
             // Claude wants to use one or more tools!
             const toolResults = [];
-            
+            const generatedImages = new Map(); // Store generated image data separately
+
             for (const toolBlock of toolUseBlocks) {
                 try {
                     if (toolBlock.name === 'web_search') {
@@ -2448,7 +2609,7 @@ ${userName}: ${userMessage}`;
                             });
                             continue;
                         }
-                        
+
                         console.log(`   🎨 Misuki wants to send a ${toolBlock.input.emotion} gif`);
                         const gifUrl = await searchGif(toolBlock.input.emotion);
                         toolResults.push({
@@ -2456,6 +2617,39 @@ ${userName}: ${userMessage}`;
                             tool_use_id: toolBlock.id,
                             content: gifUrl || 'No gif found'
                         });
+                    } else if (toolBlock.name === 'generate_image') {
+                        // Safety check for prompt parameter
+                        if (!toolBlock.input || !toolBlock.input.prompt || typeof toolBlock.input.prompt !== 'string') {
+                            console.log(`   ⚠️ Invalid generate_image prompt:`, toolBlock.input);
+                            toolResults.push({
+                                type: 'tool_result',
+                                tool_use_id: toolBlock.id,
+                                content: 'Error: No prompt provided for image generation',
+                                is_error: true
+                            });
+                            continue;
+                        }
+
+                        console.log(`   🎨 Misuki is generating an image...`);
+                        const imageResult = await generateImage(toolBlock.input.prompt);
+
+                        if (imageResult.success) {
+                            // Store image data separately (can't include custom fields in tool_result or toolBlock)
+                            generatedImages.set(toolBlock.id, imageResult.imageBase64);
+
+                            toolResults.push({
+                                type: 'tool_result',
+                                tool_use_id: toolBlock.id,
+                                content: 'Image generated successfully! Ready to send.'
+                            });
+                        } else {
+                            toolResults.push({
+                                type: 'tool_result',
+                                tool_use_id: toolBlock.id,
+                                content: `Image generation failed: ${imageResult.error}`,
+                                is_error: true
+                            });
+                        }
                     }
                 } catch (toolError) {
                     // If a tool fails, provide error result but don't crash
@@ -2491,7 +2685,8 @@ ${userName}: ${userMessage}`;
                 return {
                     text: "^^", // Simple fallback text
                     gifUrl: null, // Don't send GIF if response is empty
-                    gifEmotion: null
+                    gifEmotion: null,
+                    imageData: null
                 };
             }
             
@@ -2510,7 +2705,8 @@ ${userName}: ${userMessage}`;
                     
                     // Process additional tools (allow ONE more round)
                     const additionalToolResults = [];
-                    
+                    const additionalGeneratedImages = new Map(); // Store additional generated images
+
                     for (const toolBlock of additionalToolUse) {
                         try {
                             if (toolBlock.name === 'web_search') {
@@ -2528,12 +2724,31 @@ ${userName}: ${userMessage}`;
                                 }
                                 const gifUrl = await searchGif(toolBlock.input.emotion);
                                 additionalToolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: gifUrl || 'No gif found' });
+                            } else if (toolBlock.name === 'generate_image') {
+                                if (!toolBlock.input?.prompt) {
+                                    additionalToolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: 'Error', is_error: true });
+                                    continue;
+                                }
+                                console.log(`   🎨 Additional image generation...`);
+                                const imageResult = await generateImage(toolBlock.input.prompt);
+                                if (imageResult.success) {
+                                    // Store image data separately in Map
+                                    additionalGeneratedImages.set(toolBlock.id, imageResult.imageBase64);
+                                    additionalToolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: 'Image generated successfully!' });
+                                } else {
+                                    additionalToolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: `Error: ${imageResult.error}`, is_error: true });
+                                }
                             }
                         } catch (err) {
                             additionalToolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: 'Error', is_error: true });
                         }
                     }
                     
+                    // Merge additional generated images into main map
+                    additionalGeneratedImages.forEach((imageData, toolId) => {
+                        generatedImages.set(toolId, imageData);
+                    });
+
                     // Final call - NO MORE TOOLS
                     console.log(`   🤖 Final call with additional results...`);
                     const finalResponse = await makeAPICall([
@@ -2543,7 +2758,7 @@ ${userName}: ${userMessage}`;
                         { role: 'assistant', content: followUpResponse.data.content },
                         { role: 'user', content: additionalToolResults }
                     ], false);
-                    
+
                     const finalText = finalResponse.data.content.find(b => b.type === 'text');
                     responseText = finalText?.text?.trim() || "Here's what I found! ^^";
                 } else {
@@ -2571,18 +2786,28 @@ ${userName}: ${userMessage}`;
             const gifToolBlock = toolUseBlocks.find(block => block.name === 'send_gif');
             let gifUrl = null;
             let gifEmotion = null;
-            
+
             // Only process GIF if we have a proper text response
             if (responseText && responseText !== '...' && responseText !== 'Hmm... (⸝⸝ᵕᴗᵕ⸝⸝)' && gifToolBlock) {
                 const gifResult = toolResults.find(r => r.tool_use_id === gifToolBlock.id);
                 gifUrl = gifResult?.content && gifResult.content !== 'No gif found' ? gifResult.content : null;
                 gifEmotion = gifToolBlock.input?.emotion || null;
             }
-            
+
+            // Check if she wants to generate an image
+            const imageToolBlock = toolUseBlocks.find(block => block.name === 'generate_image');
+            let imageData = null;
+
+            if (imageToolBlock) {
+                // Image data is stored in the generatedImages Map (not in tool_result or toolBlock)
+                imageData = generatedImages.get(imageToolBlock.id) || null;
+            }
+
             return {
                 text: responseText,
                 gifUrl: gifUrl,
-                gifEmotion: gifEmotion
+                gifEmotion: gifEmotion,
+                imageData: imageData
             };
         } else {
             // No tool use - just return the text response
@@ -2596,7 +2821,8 @@ ${userName}: ${userMessage}`;
             return {
                 text: responseText,
                 gifUrl: null,
-                gifEmotion: null
+                gifEmotion: null,
+                imageData: null
             };
         }
     } catch (error) {
@@ -2708,6 +2934,189 @@ function isUserTyping(userId, channelId) {
     const now = Date.now();
     return (now - typerData.lastUpdate) < 10000;
 }
+
+// Slash command handler for admin controls
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+
+    if (interaction.commandName === 'selfie') {
+        // Check if user is Dan (admin)
+        if (interaction.user.id !== MAIN_USER_ID) {
+            await interaction.reply({ content: 'Only Dan can use this command!', ephemeral: true });
+            return;
+        }
+
+        const subcommand = interaction.options.getSubcommand();
+
+        if (subcommand === 'mode') {
+            const mode = interaction.options.getString('mode');
+
+            if (mode === 'private') {
+                selfieMode = 'private';
+                await interaction.reply({ content: '🔒 Selfie mode set to **private**. Only you can request selfies now.', ephemeral: true });
+                console.log('📸 Selfie mode changed to: private (Dan only)');
+            } else if (mode === 'all') {
+                selfieMode = 'all';
+                await interaction.reply({ content: '🌐 Selfie mode set to **all**. Everyone can request selfies now.', ephemeral: true });
+                console.log('📸 Selfie mode changed to: all');
+            }
+        } else if (subcommand === 'forcesend') {
+            // Force Misuki to send a selfie
+            const additionalPrompt = interaction.options.getString('prompt');
+            const unaware = interaction.options.getBoolean('unaware') || false;
+            console.log('📸 Force selfie requested by Dan', additionalPrompt ? `with prompt: "${additionalPrompt}"` : '', unaware ? '(unaware mode - won\'t save to database)' : '');
+
+            // Defer reply since image generation takes time
+            await interaction.deferReply();
+
+            try {
+                // Get user profile to get database user_id
+                const userProfile = await getUserProfile(interaction.user.id, interaction.user.username);
+
+                // Get current activity for context
+                const currentActivity = getMisukiCurrentActivity();
+
+                // Generate image with current context + additional prompt
+                const mood = currentActivity.mood || 'happy';
+                // Note: Don't include outfit in contextPrompt - it's handled by the outfit system based on currentActivity
+                let contextPrompt = `${mood} expression, natural pose, indoor setting, soft lighting, relaxed atmosphere`;
+                if (additionalPrompt) {
+                    contextPrompt = `${contextPrompt}, ${additionalPrompt}`;
+                }
+                const imageResult = await generateImage(contextPrompt, currentActivity);
+
+                if (imageResult.success) {
+                    // Convert base64 to buffer
+                    const imageBuffer = Buffer.from(imageResult.imageBase64, 'base64');
+
+                    // Reluctant/playful messages
+                    const messages = [
+                        "Fine fine... here you go (˶ᵕ ᵕ˶)",
+                        "Okay okay, you win >///<",
+                        "Alright, just for you~ ^^",
+                        "You're so pushy... here (˶˃ ᵕ ˂˶)",
+                        "Fineee, one selfie coming up! ^^"
+                    ];
+                    const randomMessage = messages[Math.floor(Math.random() * messages.length)];
+
+                    // Send image with message
+                    await interaction.editReply({
+                        content: randomMessage,
+                        files: [{
+                            attachment: imageBuffer,
+                            name: 'misuki-selfie.png'
+                        }]
+                    });
+
+                    console.log('✅ Force selfie sent successfully');
+
+                    // Save to conversation history so Misuki remembers (as if naturally asked)
+                    // Include the additional prompt details so she knows what she sent
+                    // Use database user_id, not Discord ID
+                    // UNLESS unaware mode is enabled - then she won't remember
+                    if (!unaware) {
+                        const userMessage = additionalPrompt
+                            ? `send me a selfie of you ${additionalPrompt}`
+                            : 'send me a selfie';
+                        const misukiResponse = `${randomMessage} [Sent a selfie image]`;
+                        await saveConversation(userProfile.user_id, userMessage, misukiResponse, 'playful', 'dm');
+                        console.log('💾 Saved selfie to conversation history');
+                    } else {
+                        console.log('🚫 Unaware mode - selfie NOT saved to database');
+                    }
+                } else {
+                    await interaction.editReply({ content: `Umm... the selfie didn't work >.<\nError: ${imageResult.error}` });
+                    console.log('❌ Force selfie generation failed:', imageResult.error);
+                }
+            } catch (error) {
+                console.error('❌ Force selfie error:', error);
+                await interaction.editReply({ content: 'Something went wrong... (╥﹏╥)' });
+            }
+        }
+    } else if (interaction.commandName === 'imagine') {
+        // Check if user is Dan (admin)
+        if (interaction.user.id !== MAIN_USER_ID) {
+            await interaction.reply({ content: 'Only Dan can use this command!', ephemeral: true });
+            return;
+        }
+
+        const additionalPrompt = interaction.options.getString('prompt');
+        console.log('📸 Candid image generation requested by Dan', additionalPrompt ? `with prompt: "${additionalPrompt}"` : '');
+
+        // Defer reply since image generation takes time
+        await interaction.deferReply();
+
+        try {
+            // Get current activity for context
+            const currentActivity = getMisukiCurrentActivity();
+
+            // Build candid scene prompt based on activity
+            let scenePrompt = '';
+
+            // Determine location and pose based on activity type
+            if (currentActivity.type === 'sleep') {
+                scenePrompt = 'sleeping peacefully in bed, lying down, eyes closed, relaxed, bedroom setting, dim lighting, cozy atmosphere';
+            } else if (currentActivity.type === 'class' || currentActivity.type === 'lab') {
+                scenePrompt = 'in university classroom, sitting at desk, focused expression, classroom background, natural lighting';
+            } else if (currentActivity.type === 'studying') {
+                scenePrompt = 'studying at desk, sitting position, textbooks nearby, concentrated expression, indoor room, warm lighting';
+            } else if (currentActivity.type === 'commute') {
+                scenePrompt = 'walking outside, standing or moving, outdoor street scene, natural daylight';
+            } else if (currentActivity.type === 'personal') {
+                // Check specific activity for shower/changing
+                if (currentActivity.activity.toLowerCase().includes('shower')) {
+                    scenePrompt = 'in shower, standing, water droplets, steamy bathroom, wet hair, intimate setting, soft lighting';
+                } else if (currentActivity.activity.toLowerCase().includes('bed') || currentActivity.activity.toLowerCase().includes('waking')) {
+                    scenePrompt = 'in bedroom, sitting on bed or standing nearby, bedroom background, morning/evening lighting';
+                } else if (currentActivity.activity.toLowerCase().includes('eating') || currentActivity.activity.toLowerCase().includes('breakfast') || currentActivity.activity.toLowerCase().includes('lunch') || currentActivity.activity.toLowerCase().includes('dinner')) {
+                    scenePrompt = 'at dining table, sitting, eating, kitchen or dining room background, warm indoor lighting';
+                } else if (currentActivity.activity.toLowerCase().includes('preparing') || currentActivity.activity.toLowerCase().includes('cooking')) {
+                    scenePrompt = 'in kitchen, standing at counter, cooking or preparing food, kitchen background, warm lighting';
+                } else {
+                    scenePrompt = 'at home, casual indoor setting, natural pose, comfortable atmosphere, warm lighting';
+                }
+            } else if (currentActivity.type === 'free') {
+                scenePrompt = 'relaxing at home, casual pose, comfortable setting, living room or bedroom, soft lighting';
+            } else if (currentActivity.type === 'church') {
+                scenePrompt = 'in church, sitting in pew, peaceful expression, church interior background, soft natural light';
+            } else {
+                // Default candid scene
+                scenePrompt = 'candid moment, natural pose, indoor setting, soft lighting, comfortable atmosphere';
+            }
+
+            // Add additional prompt if provided
+            if (additionalPrompt) {
+                scenePrompt = `${scenePrompt}, ${additionalPrompt}`;
+            }
+
+            console.log(`   📸 Candid scene: "${scenePrompt}"`);
+            console.log(`   ⏰ Current activity: ${currentActivity.activity} (${currentActivity.type})`);
+
+            const imageResult = await generateImage(scenePrompt, currentActivity);
+
+            if (imageResult.success) {
+                // Convert base64 to buffer
+                const imageBuffer = Buffer.from(imageResult.imageBase64, 'base64');
+
+                // Send image without any message (pure candid shot)
+                await interaction.editReply({
+                    files: [{
+                        attachment: imageBuffer,
+                        name: 'misuki-candid.png'
+                    }]
+                });
+
+                console.log('✅ Candid image sent successfully (not saved to database)');
+            } else {
+                await interaction.editReply({ content: `Failed to generate image.\nError: ${imageResult.error}` });
+                console.log('❌ Candid image generation failed:', imageResult.error);
+            }
+        } catch (error) {
+            console.error('❌ Imagine command error:', error);
+            await interaction.editReply({ content: 'Something went wrong generating the image.' });
+        }
+    }
+});
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
@@ -3119,15 +3528,23 @@ async function processMessage(message, allBufferedMessages = [message]) {
             const response = responseData.text;
             const gifUrl = responseData.gifUrl;
             const gifEmotion = responseData.gifEmotion;
+            const imageData = responseData.imageData;
             
             // Ensure we always have text - if empty, provide a fallback
             const finalResponse = response && response.trim() ? response : "^^";
-            
+
             // Save conversation - use user_id from profile
             // IMPORTANT: Save ALL messages (DM + Server) for cross-context memory
             // This allows Dan to ask about server conversations in private DMs
             const contextType = isDM ? 'dm' : 'server';
-            await saveConversation(userProfile.user_id, userMessage, finalResponse, 'gentle', contextType);
+
+            // If image was generated, append a note to the saved response so Misuki remembers
+            let savedResponse = finalResponse;
+            if (imageData) {
+                savedResponse = `${finalResponse} [Sent a selfie image]`;
+            }
+
+            await saveConversation(userProfile.user_id, userMessage, savedResponse, 'gentle', contextType);
 
             console.log(`   💾 Saved to database: ${isDM ? 'DM' : 'Server'} conversation with ${userName}`);
 
@@ -3209,7 +3626,46 @@ async function processMessage(message, allBufferedMessages = [message]) {
                     }
                 }
             }
-            
+
+            // AI Generated Image system - send image FIRST if generated
+            if (imageData) {
+                console.log(`   🎨 Sending generated image...`);
+
+                // Retry logic for image sending
+                let imageRetries = 0;
+                const maxImageRetries = 3;
+
+                while (imageRetries < maxImageRetries) {
+                    try {
+                        // Convert base64 to buffer
+                        const imageBuffer = Buffer.from(imageData, 'base64');
+
+                        // Send as attachment
+                        await message.channel.send({
+                            files: [{
+                                attachment: imageBuffer,
+                                name: 'misuki-selfie.png'
+                            }]
+                        });
+                        console.log(`   ✅ Sent generated image`);
+                        break; // Success
+                    } catch (imageError) {
+                        imageRetries++;
+                        if (imageRetries < maxImageRetries) {
+                            console.log(`   ⚠️ Image send failed (attempt ${imageRetries}/${maxImageRetries}), retrying...`);
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        } else {
+                            console.error(`   ❌ Failed to send image after ${maxImageRetries} attempts:`, imageError.message);
+                            // Don't throw - image is optional, continue without it
+                        }
+                    }
+                }
+
+                // Add delay after image before sending text
+                const afterImageDelay = 800 + Math.random() * 1200;
+                await new Promise(resolve => setTimeout(resolve, afterImageDelay));
+            }
+
             // Send messages with retry logic for Discord API
             for (let i = 0; i < messages.length; i++) {
                 let sendRetries = 0;
@@ -3283,7 +3739,7 @@ async function processMessage(message, allBufferedMessages = [message]) {
                     await saveGifToHistory(userProfile.user_id, gifEmotion);
                 }
             }
-            
+
             // Success! Break out of retry loop
 
             // Check for pending messages from same user (sent while we were processing)

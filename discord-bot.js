@@ -44,6 +44,45 @@ const ALLOWED_CHANNEL_ID = '1436370040524902520';
 // Selfie permission mode - controls who can request selfies
 let selfieMode = 'all'; // 'all' or 'private' (private = Dan only)
 
+// ===== OUTFIT CONSISTENCY SYSTEM =====
+// Defines Misuki's outfit variations for consistent appearance across images
+const MISUKI_OUTFITS = {
+    default: "casual comfortable clothes, oversized hoodie, shorts",
+    pajamas: "cute pajamas, loose comfortable sleepwear",
+    schoolUniform: "school uniform, white blouse, dark skirt, knee socks",
+    comfy: "comfy loungewear, soft sweatpants, cozy sweater",
+    sporty: "sporty outfit, athletic wear, sports bra, yoga pants",
+    casual: "casual outfit, t-shirt, jeans",
+    dress: "cute casual dress, summer dress",
+    sleepwear: "nightgown, sleep shirt",
+    workout: "workout clothes, tank top, gym shorts",
+    cozy: "cozy hoodie, comfortable pants"
+};
+
+// Track Misuki's current outfit (changes based on activities)
+let currentOutfit = MISUKI_OUTFITS.default;
+
+// Resolve outfit key to full prompt text
+function resolveOutfit(outfitKey) {
+    if (outfitKey === null) {
+        return ''; // No outfit (shower/changing)
+    }
+    return MISUKI_OUTFITS[outfitKey] || MISUKI_OUTFITS.default;
+}
+
+// Update current outfit when activity changes
+function updateCurrentOutfit(activity) {
+    if (activity && activity.outfit !== undefined) {
+        if (activity.outfit === null) {
+            // Temporarily no outfit (shower/changing)
+            console.log('   👔 Outfit: None (shower/changing)');
+        } else if (activity.outfit) {
+            currentOutfit = resolveOutfit(activity.outfit);
+            console.log(`   👔 Outfit changed to: ${activity.outfit} -> "${currentOutfit}"`);
+        }
+    }
+}
+
 // Status history tracking (for variety and awareness)
 const statusHistory = [];
 const MAX_STATUS_HISTORY = 5;
@@ -379,10 +418,16 @@ function getQueueMessage(type, mentionUser, currentUser) {
 // Proactive messaging tracking
 let lastMajorActivityType = null;
 let lastProactiveMessageTime = 0;
-
-// Proactive messaging tracking
 let lastProactiveCheck = null; // Track last activity we checked
 let lastMessageTimes = {}; // Track last message time per user
+
+// Autonomous messaging system
+let proactiveMessageCount = 0;
+let proactiveMessageDate = new Date().toDateString();
+let currentMood = 'neutral'; // Misuki's current emotional state
+const MAX_DAILY_PROACTIVE_MESSAGES = 8;
+const SPONTANEOUS_CHECK_INTERVAL = 15 * 60 * 1000; // 15 minutes
+const MIN_MESSAGE_GAP = 30 * 60 * 1000; // 30 minutes
 
 async function connectDB() {
     // Use connection pool instead of single connection
@@ -807,9 +852,452 @@ Your message:`;
         lastProactiveMessageTime = Date.now();
         
         console.log(`   💌 Proactive message sent: "${message}"`);
-        
+
     } catch (error) {
         console.error('   ❌ Error sending proactive message:', error.message);
+    }
+}
+
+// Calculate desire to send a spontaneous message based on multiple factors
+function calculateMessageDesire(currentActivity, danPresence, timeSinceLastMessage) {
+    let score = 0;
+    const reasons = [];
+
+    // 1. Time since last message factor
+    const hoursSinceLastMessage = timeSinceLastMessage / (1000 * 60 * 60);
+    if (hoursSinceLastMessage < 1) {
+        score -= 50;
+        reasons.push(`Too recent (${Math.round(hoursSinceLastMessage * 60)} min ago): -50`);
+    } else if (hoursSinceLastMessage < 3) {
+        score += 0;
+        reasons.push(`Recent (${Math.round(hoursSinceLastMessage)} hr ago): 0`);
+    } else if (hoursSinceLastMessage < 6) {
+        score += 20;
+        reasons.push(`Moderate gap (${Math.round(hoursSinceLastMessage)} hr ago): +20`);
+    } else if (hoursSinceLastMessage < 12) {
+        score += 40;
+        reasons.push(`Long gap (${Math.round(hoursSinceLastMessage)} hr ago): +40`);
+    } else {
+        score += 60;
+        reasons.push(`Very long gap (${Math.round(hoursSinceLastMessage)} hr ago): +60`);
+    }
+
+    // 2. Activity type factor
+    const activityType = currentActivity.type;
+    if (activityType === 'free') {
+        score += 30;
+        reasons.push('Free time (bored/chatty): +30');
+    } else if (activityType === 'studying') {
+        score += 15;
+        reasons.push('Studying (procrastination urge): +15');
+    } else if (activityType === 'sleep' || activityType === 'class' || activityType === 'lab') {
+        score -= 100;
+        reasons.push(`${activityType} (shouldn't disturb): -100`);
+    } else if (activityType === 'personal') {
+        // Check specific personal activities
+        const activity = currentActivity.activity.toLowerCase();
+        if (activity.includes('bed') || activity.includes('scrolling phone')) {
+            score += 25;
+            reasons.push('In bed with phone (cozy chat time): +25');
+        } else if (activity.includes('shower')) {
+            score -= 100;
+            reasons.push('Showering (unavailable): -100');
+        } else {
+            score += 10;
+            reasons.push('Personal time: +10');
+        }
+    } else if (activityType === 'break') {
+        score += 20;
+        reasons.push('On break (good timing): +20');
+    }
+
+    // 3. Dan's Discord status factor
+    if (danPresence) {
+        const status = danPresence.status;
+        if (status === 'online') {
+            score += 20;
+            reasons.push('Dan is online: +20');
+        } else if (status === 'idle') {
+            score += 10;
+            reasons.push('Dan is idle: +10');
+        } else if (status === 'dnd') {
+            score -= 50;
+            reasons.push('Dan is DND (respect privacy): -50');
+        } else {
+            score += 0;
+            reasons.push('Dan is offline: 0');
+        }
+
+        // Check if Dan is actively doing something (gaming, Spotify, etc.)
+        if (danPresence.activities && danPresence.activities.length > 0) {
+            const hasGame = danPresence.activities.some(a => a.type === 0); // Playing
+            const hasSpotify = danPresence.activities.some(a => a.name === 'Spotify');
+            if (hasGame) {
+                score += 5;
+                reasons.push('Dan is gaming (can still chat): +5');
+            }
+            if (hasSpotify) {
+                score += 5;
+                reasons.push('Dan is listening to music: +5');
+            }
+        }
+    }
+
+    // 4. Time of day alignment (Dan's timezone - Indonesia)
+    const now = new Date();
+    const indonesiaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
+    const hour = indonesiaTime.getHours();
+
+    if (hour >= 9 && hour < 22) {
+        score += 15;
+        reasons.push('Dan\'s daytime (9am-10pm): +15');
+    } else if (hour >= 1 && hour < 7) {
+        score -= 30;
+        reasons.push('Dan\'s sleep hours (1am-7am): -30');
+    } else {
+        score += 5;
+        reasons.push('Dan\'s evening/late: +5');
+    }
+
+    // 5. Random spontaneity factor
+    const randomFactor = Math.floor(Math.random() * 61) - 20; // -20 to +40
+    score += randomFactor;
+    reasons.push(`Random factor: ${randomFactor > 0 ? '+' : ''}${randomFactor}`);
+
+    // 6. Mood factor
+    if (currentMood === 'lonely' || currentMood === 'missing') {
+        score += 20;
+        reasons.push(`Mood (${currentMood}): +20`);
+    } else if (currentMood === 'excited' || currentMood === 'happy') {
+        score += 10;
+        reasons.push(`Mood (${currentMood}): +10`);
+    }
+
+    // 7. Trust level bonus (always max with Dan)
+    score += 10;
+    reasons.push('Max trust with Dan: +10');
+
+    return { score, reasons };
+}
+
+// Check if Misuki should spontaneously message Dan
+async function checkSpontaneousMessage() {
+    try {
+        // Reset daily counter at midnight Japan time
+        const now = new Date();
+        const japanTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+        const currentDate = japanTime.toDateString();
+
+        if (currentDate !== proactiveMessageDate) {
+            proactiveMessageCount = 0;
+            proactiveMessageDate = currentDate;
+            console.log('🌅 New day - reset proactive message counter');
+        }
+
+        // Check daily limit
+        if (proactiveMessageCount >= MAX_DAILY_PROACTIVE_MESSAGES) {
+            console.log('📊 Daily proactive message limit reached. Skipping check.');
+            return;
+        }
+
+        // Check minimum time gap since last proactive message
+        const timeSinceLastProactive = Date.now() - lastProactiveMessageTime;
+        if (timeSinceLastProactive < MIN_MESSAGE_GAP) {
+            return; // Too soon, skip silently
+        }
+
+        // Get current activity
+        const currentActivity = getMisukiCurrentActivity();
+
+        // Get Dan's presence/activity
+        let danPresence = null;
+        try {
+            const dan = await client.users.fetch(MAIN_USER_ID);
+            // Try to find Dan's presence from guilds
+            for (const guild of client.guilds.cache.values()) {
+                const member = guild.members.cache.get(MAIN_USER_ID);
+                if (member && member.presence) {
+                    danPresence = member.presence;
+                    break;
+                }
+            }
+        } catch (error) {
+            console.log('⚠️  Could not fetch Dan\'s presence');
+        }
+
+        // Get time since last message to Dan
+        let lastMessageTime = lastMessageTimes[MAIN_USER_ID];
+
+        // If not tracked in memory, try to get from database
+        if (!lastMessageTime) {
+            try {
+                const userProfile = await getUserProfile(MAIN_USER_ID, 'Dan');
+                if (userProfile && userProfile.last_interaction) {
+                    lastMessageTime = new Date(userProfile.last_interaction).getTime();
+                } else {
+                    // Default to 1 hour ago if no data (prevents huge numbers)
+                    lastMessageTime = Date.now() - (1 * 60 * 60 * 1000);
+                }
+            } catch (error) {
+                lastMessageTime = Date.now() - (1 * 60 * 60 * 1000);
+            }
+        }
+
+        const timeSinceLastMessage = Date.now() - lastMessageTime;
+
+        // Calculate desire score
+        const { score, reasons } = calculateMessageDesire(currentActivity, danPresence, timeSinceLastMessage);
+
+        console.log(`💭 Spontaneous message check - Score: ${score}/50`);
+        reasons.forEach(reason => console.log(`   ${reason}`));
+
+        // Decision threshold
+        if (score >= 50) {
+            console.log('✅ Score >= 50! Initiating spontaneous message...');
+
+            // Determine message type based on context
+            let messageType = 'casual';
+            const hoursSinceLastMessage = timeSinceLastMessage / (1000 * 60 * 60);
+
+            if (hoursSinceLastMessage > 12) {
+                messageType = 'missing';
+            } else if (currentActivity.activity.toLowerCase().includes('bed') || currentActivity.activity.toLowerCase().includes('scrolling phone')) {
+                const hour = japanTime.getHours();
+                if (hour >= 22 || hour <= 2) {
+                    messageType = 'bedtime';
+                } else {
+                    messageType = 'cozy';
+                }
+            } else if (currentActivity.type === 'studying') {
+                messageType = 'procrastination';
+            } else if (currentActivity.type === 'free') {
+                const randomTypes = ['bored', 'thinking', 'random_question', 'excited'];
+                messageType = randomTypes[Math.floor(Math.random() * randomTypes.length)];
+            }
+
+            // Decide whether to DM or post in server
+            // Factors: privacy of message type, time of day, randomness
+            const shouldUseDM = decideDMvsServer(messageType, currentActivity, japanTime);
+
+            // Send spontaneous message
+            await sendSpontaneousMessage(messageType, currentActivity, danPresence, shouldUseDM);
+
+            // Increment counter
+            proactiveMessageCount++;
+            console.log(`📊 Proactive messages today: ${proactiveMessageCount}/${MAX_DAILY_PROACTIVE_MESSAGES}`);
+        } else {
+            console.log('❌ Score < 50. Not messaging yet.');
+        }
+
+    } catch (error) {
+        console.error('❌ Error in checkSpontaneousMessage:', error);
+    }
+}
+
+// Decide whether to use DM or server channel
+function decideDMvsServer(messageType, currentActivity, japanTime) {
+    // Private/intimate messages always go to DM
+    const privateMessageTypes = ['missing', 'bedtime', 'cozy'];
+    if (privateMessageTypes.includes(messageType)) {
+        console.log(`   💌 Choosing DM (private message type: ${messageType})`);
+        return true;
+    }
+
+    // Late night/early morning = DM (don't spam server when others might be asleep)
+    const hour = japanTime.getHours();
+    if (hour >= 22 || hour <= 7) {
+        console.log(`   💌 Choosing DM (late/early hour: ${hour})`);
+        return true;
+    }
+
+    // During class/studying = more likely to use server (quick public message)
+    if (currentActivity.type === 'studying' || currentActivity.type === 'class') {
+        const random = Math.random();
+        if (random < 0.6) { // 60% chance server
+            console.log(`   🌐 Choosing SERVER (studying/class, casual share)`);
+            return false;
+        } else {
+            console.log(`   💌 Choosing DM (studying but wants private chat)`);
+            return true;
+        }
+    }
+
+    // Free time = random choice with slight preference for server
+    if (currentActivity.type === 'free') {
+        const random = Math.random();
+        if (random < 0.55) { // 55% chance server
+            console.log(`   🌐 Choosing SERVER (free time, casual)`);
+            return false;
+        } else {
+            console.log(`   💌 Choosing DM (free time, private)`);
+            return true;
+        }
+    }
+
+    // Default to 50/50
+    const random = Math.random();
+    if (random < 0.5) {
+        console.log(`   🌐 Choosing SERVER (random choice)`);
+        return false;
+    } else {
+        console.log(`   💌 Choosing DM (random choice)`);
+        return true;
+    }
+}
+
+// Send spontaneous message with variety based on type
+async function sendSpontaneousMessage(messageType, currentActivity, danPresence, useDM = true) {
+    try {
+        // Fetch Dan and server channel
+        const dan = await client.users.fetch(MAIN_USER_ID);
+        const serverChannel = useDM ? null : await client.channels.fetch(ALLOWED_CHANNEL_ID);
+
+        // Get conversation history
+        const userProfile = await getUserProfile(MAIN_USER_ID, dan.username);
+        const history = await getConversationHistory(userProfile.user_id, 10);
+
+        // Build context about Dan's current activity
+        let danActivityContext = '';
+        if (danPresence && danPresence.activities && danPresence.activities.length > 0) {
+            const activities = danPresence.activities;
+            const game = activities.find(a => a.type === 0);
+            const spotify = activities.find(a => a.name === 'Spotify');
+            const custom = activities.find(a => a.type === 4);
+
+            if (game) {
+                danActivityContext = `You notice Dan is playing ${game.name} right now. `;
+            } else if (spotify && spotify.details) {
+                danActivityContext = `You see Dan is listening to "${spotify.details}" by ${spotify.state} on Spotify. `;
+            } else if (custom && custom.state) {
+                danActivityContext = `Dan's status says: "${custom.state}". `;
+            }
+        }
+
+        // Get Indonesia time for context
+        const now = new Date();
+        const indonesiaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
+        const danTimeString = indonesiaTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+        // Build recent conversation context
+        let conversationContext = '';
+        if (history.length > 0) {
+            const recentMessages = history.slice(-3);
+            conversationContext = '\n\nRecent conversation (for context only - this was EARLIER, not happening now):\n';
+            recentMessages.forEach(msg => {
+                if (msg.user_message && !msg.user_message.includes('[Misuki initiated')) {
+                    conversationContext += `Dan: ${msg.user_message}\n`;
+                }
+                if (msg.misuki_response) conversationContext += `You: ${msg.misuki_response}\n`;
+            });
+            conversationContext += '\n(That conversation is now over. You\'re starting a NEW spontaneous message RIGHT NOW.)';
+        }
+
+        // Build personality prompt based on message type
+        let personalityPrompt = '';
+        switch (messageType) {
+            case 'missing':
+                personalityPrompt = 'You\'re feeling lonely and miss him. You haven\'t talked in a while and you want to reach out. Be vulnerable but not overwhelming. Show you care.';
+                break;
+            case 'bedtime':
+                personalityPrompt = 'It\'s late and you\'re in bed about to sleep. You want to say goodnight and let him know you\'re thinking of him. Be sweet and cozy.';
+                break;
+            case 'procrastination':
+                personalityPrompt = 'You\'re supposed to be studying but you can\'t focus. You want to procrastinate by texting him. Be playful about avoiding homework.';
+                break;
+            case 'bored':
+                personalityPrompt = 'You\'re bored and want some attention. You\'re looking for something fun to talk about or do. Be casual and a bit needy.';
+                break;
+            case 'thinking':
+                personalityPrompt = 'You were just thinking about him randomly and felt like reaching out. Be natural and genuine about it.';
+                break;
+            case 'random_question':
+                personalityPrompt = 'You have a random question or thought you want to share. Be curious and conversational.';
+                break;
+            case 'excited':
+                personalityPrompt = 'Something interesting happened or you\'re feeling good and want to share your mood. Be enthusiastic.';
+                break;
+            case 'cozy':
+                personalityPrompt = 'You\'re relaxing comfortably and in a chatty mood. You want some cozy conversation. Be warm and comfortable.';
+                break;
+            default:
+                personalityPrompt = 'You\'re feeling spontaneous and want to chat. Be natural and authentic.';
+        }
+
+        // Build context about where she's messaging
+        const messagingContext = useDM
+            ? 'You are DMing Dan directly (private conversation, just you two).'
+            : 'You are posting in the Discord server where Dan and others can see (public message to everyone, but mainly for Dan).';
+
+        const audienceNote = useDM
+            ? ''
+            : '\n\nIMPORTANT: This is a PUBLIC server message. Others can see it. Keep it casual/light, avoid overly intimate/private things. You can still be playful and yourself, but remember it\'s not just Dan reading.';
+
+        // Create prompt for Claude
+        const prompt = `You are Misuki, messaging your boyfriend Dan spontaneously.
+
+CURRENT SITUATION:
+- Your current activity: ${currentActivity.activity} (${currentActivity.type})
+- Your location: At home in Saitama, Japan
+- Time for you: ${new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' })).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} (Japan time)
+- Time for Dan: ${danTimeString} (Indonesia time)
+- Your mood: ${currentMood}
+${danActivityContext}
+
+WHERE YOU'RE MESSAGING: ${messagingContext}
+
+YOUR MOTIVATION: ${personalityPrompt}
+${conversationContext}${audienceNote}
+
+IMPORTANT: This is a BRAND NEW spontaneous message you're initiating RIGHT NOW. You're not responding to anything Dan just said - you're reaching out on your own. Don't reference or respond to the old conversation above - that was earlier. This is a fresh start.
+
+Write a SHORT, natural message (1-3 sentences max). Be authentic to your personality:
+- Playful, affectionate, genuine
+- Use casual texting style (lowercase, emojis like ^^ ><  >.<  ~)
+- Don't be overly formal or explain yourself too much
+- Show your personality and feelings naturally
+- You can mention what YOU'RE doing right now, or ask what Dan is up to NOW
+- Do NOT respond to messages from the old conversation - start fresh
+${useDM ? '' : '- Since this is public, keep it appropriate for others to see (still be yourself, just not too intimate)'}
+
+Just write the message, nothing else:`;
+
+        // Generate message with Claude
+        const response = await axios.post('https://api.anthropic.com/v1/messages', {
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 150,
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 1.0
+        }, {
+            headers: {
+                'x-api-key': process.env.ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01',
+                'content-type': 'application/json'
+            },
+            timeout: 30000
+        });
+
+        const message = response.data.content[0].text.trim();
+
+        // Send the message to appropriate destination
+        if (useDM) {
+            await dan.send(message);
+            console.log(`   💌 Spontaneous DM sent (${messageType}): "${message}"`);
+        } else {
+            await serverChannel.send(message);
+            console.log(`   🌐 Spontaneous SERVER message sent (${messageType}): "${message}"`);
+        }
+
+        // Save to conversation history
+        // For spontaneous messages, she initiates (no user message), so we use a marker
+        const messageContext = useDM ? 'dm' : 'server';
+        await saveConversation(userProfile.user_id, '[Misuki initiated conversation]', message, currentMood, messageContext);
+
+        // Update tracking
+        lastProactiveMessageTime = Date.now();
+        lastMessageTimes[MAIN_USER_ID] = Date.now();
+
+    } catch (error) {
+        console.error('   ❌ Error sending spontaneous message:', error.message);
     }
 }
 
@@ -903,11 +1391,11 @@ async function startTyping(channel) {
 function getMisukiWeeklySchedule() {
     return {
         monday: [
-            { time: '05:30', activity: 'Waking up', emoji: '😴', type: 'personal' },
-            { time: '05:35', activity: 'Getting out of bed', emoji: '🛏️', type: 'personal' },
-            { time: '05:40', activity: 'Preparing the shower', emoji: '🚿', type: 'personal' },
-            { time: '05:45', activity: 'Showering', emoji: '🚿', type: 'personal' },
-            { time: '06:00', activity: 'Getting dressed', emoji: '👔', type: 'personal' },
+            { time: '05:30', activity: 'Waking up', emoji: '😴', type: 'personal', outfit: 'sleepwear' },
+            { time: '05:35', activity: 'Getting out of bed', emoji: '🛏️', type: 'personal', outfit: 'sleepwear' },
+            { time: '05:40', activity: 'Preparing the shower', emoji: '🚿', type: 'personal', outfit: 'sleepwear' },
+            { time: '05:45', activity: 'Showering', emoji: '🚿', type: 'personal', outfit: null },
+            { time: '06:00', activity: 'Getting dressed', emoji: '👔', type: 'personal', outfit: 'schoolUniform' },
             { time: '06:10', activity: 'Preparing breakfast', emoji: '🍳', type: 'personal' },
             { time: '06:15', activity: 'Eating breakfast', emoji: '🍽️', type: 'personal' },
             { time: '06:25', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
@@ -929,24 +1417,24 @@ function getMisukiWeeklySchedule() {
             { time: '15:45', activity: 'Walking to train station', emoji: '🚶‍♀️', type: 'commute' },
             { time: '16:00', activity: 'Train ride home', emoji: '🚃', type: 'commute' },
             { time: '16:20', activity: 'Walking home from station', emoji: '🚶‍♀️', type: 'commute' },
-            { time: '16:30', activity: 'Arriving home', emoji: '🏠', type: 'personal' },
-            { time: '16:45', activity: 'Changing into comfy clothes', emoji: '👕', type: 'personal' },
-            { time: '17:00', activity: 'Relaxing and snacking', emoji: '☕', type: 'free' },
+            { time: '16:30', activity: 'Arriving home', emoji: '🏠', type: 'personal', outfit: 'schoolUniform' },
+            { time: '16:45', activity: 'Changing into comfy clothes', emoji: '👕', type: 'personal', outfit: 'comfy' },
+            { time: '17:00', activity: 'Relaxing and snacking', emoji: '☕', type: 'free', outfit: 'comfy' },
             { time: '18:00', activity: 'Starting homework', emoji: '📖', type: 'studying' },
             { time: '19:30', activity: 'Preparing dinner', emoji: '🍳', type: 'personal' },
             { time: '20:00', activity: 'Eating dinner with mom', emoji: '🍽️', type: 'personal' },
             { time: '20:45', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
             { time: '21:00', activity: 'Free time', emoji: '📱', type: 'free' },
-            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal' },
-            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal' },
-            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep' }
+            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal', outfit: 'pajamas' },
+            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal', outfit: 'pajamas' },
+            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep', outfit: 'pajamas' }
         ],
         tuesday: [
-            { time: '07:00', activity: 'Waking up', emoji: '😴', type: 'personal' },
-            { time: '07:10', activity: 'Getting out of bed slowly', emoji: '🛏️', type: 'personal' },
-            { time: '07:20', activity: 'Preparing the shower', emoji: '🚿', type: 'personal' },
-            { time: '07:25', activity: 'Showering', emoji: '🚿', type: 'personal' },
-            { time: '07:40', activity: 'Getting dressed casually', emoji: '👕', type: 'personal' },
+            { time: '07:00', activity: 'Waking up', emoji: '😴', type: 'personal', outfit: 'pajamas' },
+            { time: '07:10', activity: 'Getting out of bed slowly', emoji: '🛏️', type: 'personal', outfit: 'pajamas' },
+            { time: '07:20', activity: 'Preparing the shower', emoji: '🚿', type: 'personal', outfit: 'pajamas' },
+            { time: '07:25', activity: 'Showering', emoji: '🚿', type: 'personal', outfit: null },
+            { time: '07:40', activity: 'Getting dressed casually', emoji: '👕', type: 'personal', outfit: 'casual' },
             { time: '07:50', activity: 'Preparing breakfast', emoji: '🍳', type: 'personal' },
             { time: '08:00', activity: 'Eating breakfast', emoji: '🍽️', type: 'personal' },
             { time: '08:30', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
@@ -963,16 +1451,16 @@ function getMisukiWeeklySchedule() {
             { time: '20:00', activity: 'Eating dinner with mom', emoji: '🍽️', type: 'personal' },
             { time: '20:45', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
             { time: '21:00', activity: 'Free time', emoji: '📱', type: 'free' },
-            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal' },
-            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal' },
-            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep' }
+            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal', outfit: 'pajamas' },
+            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal', outfit: 'pajamas' },
+            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep', outfit: 'pajamas' }
         ],
         wednesday: [
-            { time: '07:00', activity: 'Waking up', emoji: '😴', type: 'personal' },
-            { time: '07:10', activity: 'Getting out of bed slowly', emoji: '🛏️', type: 'personal' },
-            { time: '07:20', activity: 'Preparing the shower', emoji: '🚿', type: 'personal' },
-            { time: '07:25', activity: 'Showering', emoji: '🚿', type: 'personal' },
-            { time: '07:40', activity: 'Getting dressed casually', emoji: '👕', type: 'personal' },
+            { time: '07:00', activity: 'Waking up', emoji: '😴', type: 'personal', outfit: 'pajamas' },
+            { time: '07:10', activity: 'Getting out of bed slowly', emoji: '🛏️', type: 'personal', outfit: 'pajamas' },
+            { time: '07:20', activity: 'Preparing the shower', emoji: '🚿', type: 'personal', outfit: 'pajamas' },
+            { time: '07:25', activity: 'Showering', emoji: '🚿', type: 'personal', outfit: null },
+            { time: '07:40', activity: 'Getting dressed casually', emoji: '👕', type: 'personal', outfit: 'casual' },
             { time: '07:50', activity: 'Preparing breakfast', emoji: '🍳', type: 'personal' },
             { time: '08:00', activity: 'Eating breakfast', emoji: '🍽️', type: 'personal' },
             { time: '08:30', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
@@ -988,16 +1476,16 @@ function getMisukiWeeklySchedule() {
             { time: '19:00', activity: 'Eating dinner with mom', emoji: '🍽️', type: 'personal' },
             { time: '19:45', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
             { time: '20:00', activity: 'Free time relaxing', emoji: '😌', type: 'free' },
-            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal' },
-            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal' },
-            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep' }
+            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal', outfit: 'pajamas' },
+            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal', outfit: 'pajamas' },
+            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep', outfit: 'pajamas' }
         ],
         thursday: [
-            { time: '05:30', activity: 'Waking up', emoji: '😴', type: 'personal' },
-            { time: '05:35', activity: 'Getting out of bed', emoji: '🛏️', type: 'personal' },
-            { time: '05:40', activity: 'Preparing the shower', emoji: '🚿', type: 'personal' },
-            { time: '05:45', activity: 'Showering', emoji: '🚿', type: 'personal' },
-            { time: '06:00', activity: 'Getting dressed', emoji: '👔', type: 'personal' },
+            { time: '05:30', activity: 'Waking up', emoji: '😴', type: 'personal', outfit: 'sleepwear' },
+            { time: '05:35', activity: 'Getting out of bed', emoji: '🛏️', type: 'personal', outfit: 'sleepwear' },
+            { time: '05:40', activity: 'Preparing the shower', emoji: '🚿', type: 'personal', outfit: 'sleepwear' },
+            { time: '05:45', activity: 'Showering', emoji: '🚿', type: 'personal', outfit: null },
+            { time: '06:00', activity: 'Getting dressed', emoji: '👔', type: 'personal', outfit: 'schoolUniform' },
             { time: '06:10', activity: 'Preparing breakfast', emoji: '🍳', type: 'personal' },
             { time: '06:15', activity: 'Eating breakfast', emoji: '🍽️', type: 'personal' },
             { time: '06:25', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
@@ -1018,24 +1506,24 @@ function getMisukiWeeklySchedule() {
             { time: '15:00', activity: 'Walking to train station', emoji: '🚶‍♀️', type: 'commute' },
             { time: '15:15', activity: 'Train ride home', emoji: '🚃', type: 'commute' },
             { time: '15:35', activity: 'Walking home from station', emoji: '🚶‍♀️', type: 'commute' },
-            { time: '15:45', activity: 'Arriving home', emoji: '🏠', type: 'personal' },
-            { time: '16:00', activity: 'Changing into comfy clothes', emoji: '👕', type: 'personal' },
-            { time: '16:15', activity: 'Free time relaxing', emoji: '😌', type: 'free' },
+            { time: '15:45', activity: 'Arriving home', emoji: '🏠', type: 'personal', outfit: 'schoolUniform' },
+            { time: '16:00', activity: 'Changing into comfy clothes', emoji: '👕', type: 'personal', outfit: 'comfy' },
+            { time: '16:15', activity: 'Free time relaxing', emoji: '😌', type: 'free', outfit: 'comfy' },
             { time: '18:00', activity: 'Starting homework', emoji: '📖', type: 'studying' },
             { time: '19:30', activity: 'Preparing dinner', emoji: '🍳', type: 'personal' },
             { time: '20:00', activity: 'Eating dinner with mom', emoji: '🍽️', type: 'personal' },
             { time: '20:45', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
             { time: '21:00', activity: 'Free time', emoji: '📱', type: 'free' },
-            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal' },
-            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal' },
-            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep' }
+            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal', outfit: 'pajamas' },
+            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal', outfit: 'pajamas' },
+            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep', outfit: 'pajamas' }
         ],
         friday: [
-            { time: '07:00', activity: 'Waking up', emoji: '😴', type: 'personal' },
-            { time: '07:10', activity: 'Getting out of bed', emoji: '🛏️', type: 'personal' },
-            { time: '07:20', activity: 'Preparing the shower', emoji: '🚿', type: 'personal' },
-            { time: '07:25', activity: 'Showering', emoji: '🚿', type: 'personal' },
-            { time: '07:40', activity: 'Getting dressed', emoji: '👕', type: 'personal' },
+            { time: '07:00', activity: 'Waking up', emoji: '😴', type: 'personal', outfit: 'pajamas' },
+            { time: '07:10', activity: 'Getting out of bed', emoji: '🛏️', type: 'personal', outfit: 'pajamas' },
+            { time: '07:20', activity: 'Preparing the shower', emoji: '🚿', type: 'personal', outfit: 'pajamas' },
+            { time: '07:25', activity: 'Showering', emoji: '🚿', type: 'personal', outfit: null },
+            { time: '07:40', activity: 'Getting dressed', emoji: '👕', type: 'personal', outfit: 'casual' },
             { time: '07:50', activity: 'Preparing breakfast', emoji: '🍳', type: 'personal' },
             { time: '08:00', activity: 'Eating breakfast', emoji: '🍽️', type: 'personal' },
             { time: '08:30', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
@@ -1051,16 +1539,16 @@ function getMisukiWeeklySchedule() {
             { time: '18:30', activity: 'Eating dinner with mom', emoji: '🍽️', type: 'personal' },
             { time: '19:15', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
             { time: '19:30', activity: 'Free time relaxing', emoji: '😌', type: 'free' },
-            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal' },
-            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal' },
-            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep' }
+            { time: '22:30', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal', outfit: 'pajamas' },
+            { time: '23:00', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal', outfit: 'pajamas' },
+            { time: '23:30', activity: 'Sleeping', emoji: '😴', type: 'sleep', outfit: 'pajamas' }
         ],
         saturday: [
-            { time: '08:00', activity: 'Waking up naturally', emoji: '😴', type: 'personal' },
-            { time: '08:15', activity: 'Getting out of bed slowly', emoji: '🛏️', type: 'personal' },
-            { time: '08:30', activity: 'Preparing the shower', emoji: '🚿', type: 'personal' },
-            { time: '08:35', activity: 'Taking a long shower', emoji: '🚿', type: 'personal' },
-            { time: '09:00', activity: 'Getting dressed casually', emoji: '👕', type: 'personal' },
+            { time: '08:00', activity: 'Waking up naturally', emoji: '😴', type: 'personal', outfit: 'pajamas' },
+            { time: '08:15', activity: 'Getting out of bed slowly', emoji: '🛏️', type: 'personal', outfit: 'pajamas' },
+            { time: '08:30', activity: 'Preparing the shower', emoji: '🚿', type: 'personal', outfit: 'pajamas' },
+            { time: '08:35', activity: 'Taking a long shower', emoji: '🚿', type: 'personal', outfit: null },
+            { time: '09:00', activity: 'Getting dressed casually', emoji: '👕', type: 'personal', outfit: 'casual' },
             { time: '09:15', activity: 'Preparing breakfast', emoji: '🍳', type: 'personal' },
             { time: '09:30', activity: 'Eating breakfast leisurely', emoji: '🍽️', type: 'personal' },
             { time: '10:00', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
@@ -1075,16 +1563,16 @@ function getMisukiWeeklySchedule() {
             { time: '19:00', activity: 'Eating dinner with mom', emoji: '🍽️', type: 'personal' },
             { time: '19:45', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
             { time: '20:00', activity: 'Free time relaxing', emoji: '😌', type: 'free' },
-            { time: '23:00', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal' },
-            { time: '23:30', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal' },
-            { time: '23:45', activity: 'Sleeping', emoji: '😴', type: 'sleep' }
+            { time: '23:00', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal', outfit: 'pajamas' },
+            { time: '23:30', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal', outfit: 'pajamas' },
+            { time: '23:45', activity: 'Sleeping', emoji: '😴', type: 'sleep', outfit: 'pajamas' }
         ],
         sunday: [
-            { time: '07:00', activity: 'Waking up for church', emoji: '😴', type: 'personal' },
-            { time: '07:10', activity: 'Getting out of bed', emoji: '🛏️', type: 'personal' },
-            { time: '07:15', activity: 'Preparing the shower', emoji: '🚿', type: 'personal' },
-            { time: '07:20', activity: 'Showering', emoji: '🚿', type: 'personal' },
-            { time: '07:35', activity: 'Getting dressed nicely', emoji: '👗', type: 'personal' },
+            { time: '07:00', activity: 'Waking up for church', emoji: '😴', type: 'personal', outfit: 'pajamas' },
+            { time: '07:10', activity: 'Getting out of bed', emoji: '🛏️', type: 'personal', outfit: 'pajamas' },
+            { time: '07:15', activity: 'Preparing the shower', emoji: '🚿', type: 'personal', outfit: 'pajamas' },
+            { time: '07:20', activity: 'Showering', emoji: '🚿', type: 'personal', outfit: null },
+            { time: '07:35', activity: 'Getting dressed nicely', emoji: '👗', type: 'personal', outfit: 'dress' },
             { time: '07:45', activity: 'Preparing breakfast', emoji: '🍳', type: 'personal' },
             { time: '07:50', activity: 'Eating breakfast quickly', emoji: '🍽️', type: 'personal' },
             { time: '08:00', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
@@ -1093,9 +1581,9 @@ function getMisukiWeeklySchedule() {
             { time: '08:45', activity: 'Church service', emoji: '⛪', type: 'church' },
             { time: '11:00', activity: 'Church ends', emoji: '✅', type: 'church' },
             { time: '11:15', activity: 'Walking home', emoji: '🚶‍♀️', type: 'commute' },
-            { time: '11:40', activity: 'Arriving home', emoji: '🏠', type: 'personal' },
-            { time: '11:50', activity: 'Changing into comfy clothes', emoji: '👕', type: 'personal' },
-            { time: '12:00', activity: 'Preparing lunch', emoji: '🍳', type: 'personal' },
+            { time: '11:40', activity: 'Arriving home', emoji: '🏠', type: 'personal', outfit: 'dress' },
+            { time: '11:50', activity: 'Changing into comfy clothes', emoji: '👕', type: 'personal', outfit: 'comfy' },
+            { time: '12:00', activity: 'Preparing lunch', emoji: '🍳', type: 'personal', outfit: 'comfy' },
             { time: '12:30', activity: 'Eating lunch with mom', emoji: '🍽️', type: 'personal' },
             { time: '13:15', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
             { time: '13:30', activity: 'Free time relaxing', emoji: '😌', type: 'free' },
@@ -1105,9 +1593,9 @@ function getMisukiWeeklySchedule() {
             { time: '19:00', activity: 'Eating dinner with mom', emoji: '🍽️', type: 'personal' },
             { time: '19:45', activity: 'Cleaning dishes', emoji: '🧼', type: 'personal' },
             { time: '20:00', activity: 'Free time', emoji: '😌', type: 'free' },
-            { time: '22:00', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal' },
-            { time: '22:30', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal' },
-            { time: '23:00', activity: 'Sleeping', emoji: '😴', type: 'sleep' }
+            { time: '22:00', activity: 'Getting ready for bed', emoji: '🌙', type: 'personal', outfit: 'pajamas' },
+            { time: '22:30', activity: 'In bed scrolling phone', emoji: '📱', type: 'personal', outfit: 'pajamas' },
+            { time: '23:00', activity: 'Sleeping', emoji: '😴', type: 'sleep', outfit: 'pajamas' }
         ]
     };
 }
@@ -1173,7 +1661,10 @@ function getCurrentStatus() {
 function updateDiscordStatus() {
     const activity = getMisukiCurrentActivity();
     const activityType = activity.type;
-    
+
+    // Update outfit based on current activity
+    updateCurrentOutfit(activity);
+
     // Check for proactive messaging opportunity (async, don't wait)
     checkProactiveMessage().catch(err => {
         console.error('Error checking proactive message:', err);
@@ -1609,18 +2100,35 @@ async function generateImage(contextPrompt, currentActivity = null) {
     try {
         console.log(`   🎨 Generating image with context: "${contextPrompt}"`);
 
-        // Base required prompts for Misuki's character
-        const basePrompt = "masterpiece, newest, absurdres, best quality, amazing quality, very aesthetic, ultra-detailed, highly detailed, MO85KO, <lora:Style_Mosouko_Illustrious-XLNoobAI-XL:0.8>, akebi komichi, white hair, blue eyes, medium breasts, detailed background, selfie";
+        // Determine outfit based on current activity
+        let outfitPrompt = '';
+        if (currentActivity && currentActivity.outfit) {
+            outfitPrompt = resolveOutfit(currentActivity.outfit);
+            console.log(`   👔 Using outfit: ${currentActivity.outfit} -> "${outfitPrompt}"`);
+        } else if (currentActivity && currentActivity.outfit === null) {
+            // null outfit means showering/naked - don't add outfit
+            outfitPrompt = '';
+            console.log(`   🚿 No outfit (shower/changing)`);
+        } else {
+            // Fallback to current tracked outfit or default
+            outfitPrompt = currentOutfit || MISUKI_OUTFITS.default;
+            console.log(`   👔 Using tracked outfit: "${outfitPrompt}"`);
+        }
 
-        // Build the full prompt with base + context
-        const fullPrompt = `${basePrompt}, ${contextPrompt}`;
+        // Base character prompt with high quality
+        const basePrompt = "MO85KO, <lora:Style_Mosouko_Illustrious-XLNoobAI-XL:0.8>, akebi komichi, white hair, blue eyes, medium breasts, masterpiece, best quality, highly detailed";
+
+        // Build the full prompt: character + outfit + user context
+        const fullPrompt = outfitPrompt
+            ? `${basePrompt}, ${outfitPrompt}, ${contextPrompt}`
+            : `${basePrompt}, ${contextPrompt}`;
 
         console.log(`   📝 Full prompt: "${fullPrompt}"`);
 
         // Call Stable Diffusion API (Automatic1111 WebUI format)
         const response = await axios.post(`${process.env.STABLE_DIFFUSION_API}/sdapi/v1/txt2img`, {
             prompt: fullPrompt,
-            negative_prompt: "worst quality, normal quality, anatomical nonsense, bad anatomy, interlocked fingers, extra fingers, watermark, simple background, lipstick, (nsfw)",
+            negative_prompt: "negativeXL_D",
             steps: 15,
             cfg_scale: 3.2,
             width: 1000,
@@ -2436,7 +2944,7 @@ ${userName}: ${userMessage}`;
                         properties: {
                             prompt: {
                                 type: 'string',
-                                description: 'Detailed context prompts ONLY (do NOT repeat your physical appearance like hair/eye color). Be detailed and specific. Describe: 1) Your facial expression and mood (gentle smile, soft eyes, blushing cheeks, sleepy expression, happy face, shy look, etc.), 2) Your complete outfit with details (white school uniform with red ribbon, pink pajamas with lace trim, casual sweater and skirt, etc.), 3) Your pose and body language (sitting on bed, leaning forward, resting chin on hand, looking at camera, etc.), 4) Detailed setting (cozy bedroom with fairy lights, well-lit classroom with desks, modern cafe with windows, etc.), 5) Lighting and atmosphere (warm golden hour lighting, soft morning light, dim evening glow, bright natural sunlight, etc.). NEVER mention "phone" or "holding phone" - selfies are implied. Example: "gentle tired smile, soft sleepy eyes, pink cotton pajamas with white trim, sitting on bed with knees up, cozy bedroom with warm lamp lighting, evening atmosphere, relaxed pose" or "bright happy smile, excited expression, school uniform with red bow, sitting at wooden desk, sunny classroom with windows, natural daylight, cheerful mood"'
+                                description: 'Detailed context prompts ONLY (do NOT repeat your physical appearance like hair/eye color). IMPORTANT: Use your ACTUAL CURRENT LOCATION from your activity schedule - if you\'re at university, specify the exact place (cafeteria, library, classroom, etc.), if at home specify the room, etc. Be very detailed and specific. Describe: 1) Your facial expression and mood (gentle smile, soft eyes, blushing cheeks, sleepy expression, happy face, shy look, etc.), 2) Your complete outfit with details (white school uniform with red ribbon, pink pajamas with lace trim, casual sweater and skirt, etc.), 3) Your pose and body language (sitting on bed, leaning forward, resting chin on hand, looking at camera, holding food, etc.), 4) SPECIFIC setting based on current location (university cafeteria with food trays and students in background, university library with bookshelves and study desks, cozy bedroom with fairy lights and plushies, modern kitchen with appliances, living room with couch and TV, etc.), 5) Lighting and atmosphere (warm golden hour lighting, soft morning light, dim evening glow, bright natural sunlight, fluorescent cafeteria lighting, etc.). NEVER mention "phone" or "holding phone" - selfies are implied. Example: "gentle smile, relaxed expression, casual white sweater, sitting at cafeteria table with food tray, university cafeteria with students and tables in background, bright fluorescent lighting, casual atmosphere" or "sleepy tired eyes, soft smile, pink pajamas with lace trim, sitting on bed with plushies, cozy bedroom with fairy lights and posters, warm lamp lighting, evening relaxed mood"'
                             },
                             description: {
                                 type: 'string',
@@ -2473,7 +2981,7 @@ ${userName}: ${userMessage}`;
                         properties: {
                             prompt: {
                                 type: 'string',
-                                description: 'Detailed context prompts ONLY (do NOT repeat your physical appearance like hair/eye color). Be detailed and specific. Describe: 1) Your facial expression and mood (gentle smile, soft eyes, blushing cheeks, sleepy expression, happy face, shy look, etc.), 2) Your complete outfit with details (white school uniform with red ribbon, pink pajamas with lace trim, casual sweater and skirt, etc.), 3) Your pose and body language (sitting on bed, leaning forward, resting chin on hand, looking at camera, etc.), 4) Detailed setting (cozy bedroom with fairy lights, well-lit classroom with desks, modern cafe with windows, etc.), 5) Lighting and atmosphere (warm golden hour lighting, soft morning light, dim evening glow, bright natural sunlight, etc.). NEVER mention "phone" or "holding phone" - selfies are implied. Example: "gentle tired smile, soft sleepy eyes, pink cotton pajamas with white trim, sitting on bed with knees up, cozy bedroom with warm lamp lighting, evening atmosphere, relaxed pose" or "bright happy smile, excited expression, school uniform with red bow, sitting at wooden desk, sunny classroom with windows, natural daylight, cheerful mood"'
+                                description: 'Detailed context prompts ONLY (do NOT repeat your physical appearance like hair/eye color). IMPORTANT: Use your ACTUAL CURRENT LOCATION from your activity schedule - if you\'re at university, specify the exact place (cafeteria, library, classroom, etc.), if at home specify the room, etc. Be very detailed and specific. Describe: 1) Your facial expression and mood (gentle smile, soft eyes, blushing cheeks, sleepy expression, happy face, shy look, etc.), 2) Your complete outfit with details (white school uniform with red ribbon, pink pajamas with lace trim, casual sweater and skirt, etc.), 3) Your pose and body language (sitting on bed, leaning forward, resting chin on hand, looking at camera, holding food, etc.), 4) SPECIFIC setting based on current location (university cafeteria with food trays and students in background, university library with bookshelves and study desks, cozy bedroom with fairy lights and plushies, modern kitchen with appliances, living room with couch and TV, etc.), 5) Lighting and atmosphere (warm golden hour lighting, soft morning light, dim evening glow, bright natural sunlight, fluorescent cafeteria lighting, etc.). NEVER mention "phone" or "holding phone" - selfies are implied. Example: "gentle smile, relaxed expression, casual white sweater, sitting at cafeteria table with food tray, university cafeteria with students and tables in background, bright fluorescent lighting, casual atmosphere" or "sleepy tired eyes, soft smile, pink pajamas with lace trim, sitting on bed with plushies, cozy bedroom with fairy lights and posters, warm lamp lighting, evening relaxed mood"'
                             },
                             description: {
                                 type: 'string',
@@ -2831,6 +3339,8 @@ client.once('ready', () => {
     console.log(`🌐 Web search: ENABLED`);
     console.log(`🎯 Discord status: DYNAMIC (updates every 2 min)`);
     console.log(`💌 Proactive messaging: ENABLED (initiates conversations with Dan)`);
+    console.log(`🤖 Autonomous messaging: ENABLED (DM or server channel ${ALLOWED_CHANNEL_ID})`);
+    console.log(`   ⏱️  Checks every 15 min, max ${MAX_DAILY_PROACTIVE_MESSAGES}/day`);
     console.log(`🔄 MySQL connection: POOLED (prevents timeout errors)`);
 
     // Debug: Log emoji cache info
@@ -2860,6 +3370,23 @@ client.once('ready', () => {
     // Also checks for proactive messaging opportunities
     setInterval(updateDiscordStatus, 2 * 60 * 1000);
 
+    // Start autonomous messaging system - checks every 15 minutes
+    console.log(`\n🤖 Starting autonomous messaging system...`);
+    console.log(`   ⏱️  Check interval: ${SPONTANEOUS_CHECK_INTERVAL / 60000} minutes`);
+    console.log(`   📊 Daily limit: ${MAX_DAILY_PROACTIVE_MESSAGES} messages`);
+    console.log(`   ⏳ Minimum gap: ${MIN_MESSAGE_GAP / 60000} minutes`);
+
+    // Run first check after 2 minutes (give bot time to initialize)
+    setTimeout(() => {
+        console.log('\n💭 Running first spontaneous message check...');
+        checkSpontaneousMessage().catch(console.error);
+    }, 2 * 60 * 1000);
+
+    // Then check periodically
+    setInterval(() => {
+        checkSpontaneousMessage().catch(console.error);
+    }, SPONTANEOUS_CHECK_INTERVAL);
+
     connectDB().catch(console.error);
 });
 
@@ -2887,16 +3414,174 @@ client.on('interactionCreate', async (interaction) => {
             return;
         }
 
-        const mode = interaction.options.getString('mode');
+        const subcommand = interaction.options.getSubcommand();
 
-        if (mode === 'private') {
-            selfieMode = 'private';
-            await interaction.reply({ content: '🔒 Selfie mode set to **private**. Only you can request selfies now.', ephemeral: true });
-            console.log('📸 Selfie mode changed to: private (Dan only)');
-        } else if (mode === 'all') {
-            selfieMode = 'all';
-            await interaction.reply({ content: '🌐 Selfie mode set to **all**. Everyone can request selfies now.', ephemeral: true });
-            console.log('📸 Selfie mode changed to: all');
+        if (subcommand === 'mode') {
+            const mode = interaction.options.getString('mode');
+
+            if (mode === 'private') {
+                selfieMode = 'private';
+                await interaction.reply({ content: '🔒 Selfie mode set to **private**. Only you can request selfies now.', ephemeral: true });
+                console.log('📸 Selfie mode changed to: private (Dan only)');
+            } else if (mode === 'all') {
+                selfieMode = 'all';
+                await interaction.reply({ content: '🌐 Selfie mode set to **all**. Everyone can request selfies now.', ephemeral: true });
+                console.log('📸 Selfie mode changed to: all');
+            }
+        } else if (subcommand === 'forcesend') {
+            // Force Misuki to send a selfie
+            const additionalPrompt = interaction.options.getString('prompt');
+            const unaware = interaction.options.getBoolean('unaware') || false;
+            console.log('📸 Force selfie requested by Dan', additionalPrompt ? `with prompt: "${additionalPrompt}"` : '', unaware ? '(unaware mode - won\'t save to database)' : '');
+
+            // Defer reply since image generation takes time
+            await interaction.deferReply();
+
+            try {
+                // Get user profile to get database user_id
+                const userProfile = await getUserProfile(interaction.user.id, interaction.user.username);
+
+                // Get current activity for context
+                const currentActivity = getMisukiCurrentActivity();
+
+                // Generate image with current context + additional prompt
+                const mood = currentActivity.mood || 'happy';
+                // Note: Don't include outfit in contextPrompt - it's handled by the outfit system based on currentActivity
+                let contextPrompt = `${mood} expression, natural pose, indoor setting, soft lighting, relaxed atmosphere`;
+                if (additionalPrompt) {
+                    contextPrompt = `${contextPrompt}, ${additionalPrompt}`;
+                }
+                const imageResult = await generateImage(contextPrompt, currentActivity);
+
+                if (imageResult.success) {
+                    // Convert base64 to buffer
+                    const imageBuffer = Buffer.from(imageResult.imageBase64, 'base64');
+
+                    // Reluctant/playful messages
+                    const messages = [
+                        "Fine fine... here you go (˶ᵕ ᵕ˶)",
+                        "Okay okay, you win >///<",
+                        "Alright, just for you~ ^^",
+                        "You're so pushy... here (˶˃ ᵕ ˂˶)",
+                        "Fineee, one selfie coming up! ^^"
+                    ];
+                    const randomMessage = messages[Math.floor(Math.random() * messages.length)];
+
+                    // Send image with message
+                    await interaction.editReply({
+                        content: randomMessage,
+                        files: [{
+                            attachment: imageBuffer,
+                            name: 'misuki-selfie.png'
+                        }]
+                    });
+
+                    console.log('✅ Force selfie sent successfully');
+
+                    // Save to conversation history so Misuki remembers (as if naturally asked)
+                    // Include the additional prompt details so she knows what she sent
+                    // Use database user_id, not Discord ID
+                    // UNLESS unaware mode is enabled - then she won't remember
+                    if (!unaware) {
+                        const userMessage = additionalPrompt
+                            ? `send me a selfie of you ${additionalPrompt}`
+                            : 'send me a selfie';
+                        const misukiResponse = `${randomMessage} [Sent a selfie image]`;
+                        await saveConversation(userProfile.user_id, userMessage, misukiResponse, 'playful', 'dm');
+                        console.log('💾 Saved selfie to conversation history');
+                    } else {
+                        console.log('🚫 Unaware mode - selfie NOT saved to database');
+                    }
+                } else {
+                    await interaction.editReply({ content: `Umm... the selfie didn't work >.<\nError: ${imageResult.error}` });
+                    console.log('❌ Force selfie generation failed:', imageResult.error);
+                }
+            } catch (error) {
+                console.error('❌ Force selfie error:', error);
+                await interaction.editReply({ content: 'Something went wrong... (╥﹏╥)' });
+            }
+        }
+    } else if (interaction.commandName === 'imagine') {
+        // Check if user is Dan (admin)
+        if (interaction.user.id !== MAIN_USER_ID) {
+            await interaction.reply({ content: 'Only Dan can use this command!', ephemeral: true });
+            return;
+        }
+
+        const additionalPrompt = interaction.options.getString('prompt');
+        console.log('📸 Candid image generation requested by Dan', additionalPrompt ? `with prompt: "${additionalPrompt}"` : '');
+
+        // Defer reply since image generation takes time
+        await interaction.deferReply();
+
+        try {
+            // Get current activity for context
+            const currentActivity = getMisukiCurrentActivity();
+
+            // Build candid scene prompt based on activity
+            let scenePrompt = '';
+
+            // Determine location and pose based on activity type
+            if (currentActivity.type === 'sleep') {
+                scenePrompt = 'sleeping peacefully in bed, lying down, eyes closed, relaxed, bedroom setting, dim lighting, cozy atmosphere';
+            } else if (currentActivity.type === 'class' || currentActivity.type === 'lab') {
+                scenePrompt = 'in university classroom, sitting at desk, focused expression, classroom background, natural lighting';
+            } else if (currentActivity.type === 'studying') {
+                scenePrompt = 'studying at desk, sitting position, textbooks nearby, concentrated expression, indoor room, warm lighting';
+            } else if (currentActivity.type === 'commute') {
+                scenePrompt = 'walking outside, standing or moving, outdoor street scene, natural daylight';
+            } else if (currentActivity.type === 'personal') {
+                // Check specific activity for shower/changing
+                if (currentActivity.activity.toLowerCase().includes('shower')) {
+                    scenePrompt = 'in shower, standing, water droplets, steamy bathroom, wet hair, intimate setting, soft lighting';
+                } else if (currentActivity.activity.toLowerCase().includes('bed') || currentActivity.activity.toLowerCase().includes('waking')) {
+                    scenePrompt = 'in bedroom, sitting on bed or standing nearby, bedroom background, morning/evening lighting';
+                } else if (currentActivity.activity.toLowerCase().includes('eating') || currentActivity.activity.toLowerCase().includes('breakfast') || currentActivity.activity.toLowerCase().includes('lunch') || currentActivity.activity.toLowerCase().includes('dinner')) {
+                    scenePrompt = 'at dining table, sitting, eating, kitchen or dining room background, warm indoor lighting';
+                } else if (currentActivity.activity.toLowerCase().includes('preparing') || currentActivity.activity.toLowerCase().includes('cooking')) {
+                    scenePrompt = 'in kitchen, standing at counter, cooking or preparing food, kitchen background, warm lighting';
+                } else {
+                    scenePrompt = 'at home, casual indoor setting, natural pose, comfortable atmosphere, warm lighting';
+                }
+            } else if (currentActivity.type === 'free') {
+                scenePrompt = 'relaxing at home, casual pose, comfortable setting, living room or bedroom, soft lighting';
+            } else if (currentActivity.type === 'church') {
+                scenePrompt = 'in church, sitting in pew, peaceful expression, church interior background, soft natural light';
+            } else {
+                // Default candid scene
+                scenePrompt = 'candid moment, natural pose, indoor setting, soft lighting, comfortable atmosphere';
+            }
+
+            // Add additional prompt if provided
+            if (additionalPrompt) {
+                scenePrompt = `${scenePrompt}, ${additionalPrompt}`;
+            }
+
+            console.log(`   📸 Candid scene: "${scenePrompt}"`);
+            console.log(`   ⏰ Current activity: ${currentActivity.activity} (${currentActivity.type})`);
+
+            const imageResult = await generateImage(scenePrompt, currentActivity);
+
+            if (imageResult.success) {
+                // Convert base64 to buffer
+                const imageBuffer = Buffer.from(imageResult.imageBase64, 'base64');
+
+                // Send image without any message (pure candid shot)
+                await interaction.editReply({
+                    files: [{
+                        attachment: imageBuffer,
+                        name: 'misuki-candid.png'
+                    }]
+                });
+
+                console.log('✅ Candid image sent successfully (not saved to database)');
+            } else {
+                await interaction.editReply({ content: `Failed to generate image.\nError: ${imageResult.error}` });
+                console.log('❌ Candid image generation failed:', imageResult.error);
+            }
+        } catch (error) {
+            console.error('❌ Imagine command error:', error);
+            await interaction.editReply({ content: 'Something went wrong generating the image.' });
         }
     }
 });
@@ -2917,6 +3602,9 @@ client.on('messageCreate', async (message) => {
 
     const userId = message.author.id;
     const channelId = message.channel.id;
+
+    // Track last message time for autonomous messaging system
+    lastMessageTimes[userId] = Date.now();
 
     // MESSAGE BUFFERING SYSTEM - Wait for user to finish typing
     let bufferData = messageBuffer.get(userId);
